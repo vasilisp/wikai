@@ -20,6 +20,12 @@ import (
 	"github.com/yuin/goldmark"
 )
 
+func assert(condition bool, msg string) {
+	if !condition {
+		log.Fatalf("Assertion failed: %s", msg)
+	}
+}
+
 type Config struct {
 	WikiPath    string `json:"wikiPath"`
 	WikiPrefix  string `json:"wikiPrefix,omitempty"`
@@ -104,14 +110,21 @@ func wikiHandler(config *Config, w http.ResponseWriter, r *http.Request) {
 	w.Write(html)
 }
 
+func openaiClient(config *Config) *openai.Client {
+	assert(config != nil, "openaiClient non-nil config")
+	assert(config.OpenAIToken != "", "openaiClient non-empty OpenAIToken")
+	return openai.NewClient(
+		option.WithAPIKey(config.OpenAIToken),
+	)
+}
+
 func askGPT(config *Config, systemMessage string, userMessage string) (string, error) {
 	if config.OpenAIToken == "" {
 		return "", fmt.Errorf("OpenAI token not configured")
 	}
 
-	client := openai.NewClient(
-		option.WithAPIKey(config.OpenAIToken),
-	)
+	client := openaiClient(config)
+	assert(client != nil, "askGPT non-nil openaiClient")
 
 	chatCompletion, err := client.Chat.Completions.New(context.TODO(), openai.ChatCompletionNewParams{
 		Messages: openai.F([]openai.ChatCompletionMessageParamUnion{
@@ -360,6 +373,7 @@ func handlerWithConfig(config *Config, fn func(*Config, http.ResponseWriter, *ht
 }
 
 func installHandlers(config *Config) {
+	assert(config != nil, "installHandlers nil config")
 	http.HandleFunc("/", handler)
 	http.HandleFunc("/chat", handlerWithConfig(config, chatHandler))
 	http.HandleFunc("/ai", handlerWithConfig(config, aiHandler))
