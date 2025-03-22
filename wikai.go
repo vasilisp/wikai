@@ -191,6 +191,45 @@ func newPageResponse(title, content, path string, stamp int64) *aiResponse {
 	}
 }
 
+func splitTextIntoChunks(text string, chunkSize int) *[]string {
+	var chunks []string
+	runes := []rune(text) // Handle multi-byte characters
+	for i := 0; i < len(runes); i += chunkSize {
+		end := i + chunkSize
+		if end > len(runes) {
+			end = len(runes)
+		}
+		chunks = append(chunks, string(runes[i:end]))
+	}
+	return &chunks
+}
+
+func vectorizePage(config *Config, page *page) ([]float64, error) {
+	assert(config != nil, "vectorizePage nil config")
+	assert(page != nil, "vectorizePage nil page")
+
+	// Create embedding request
+	client := openaiClient(config)
+	assert(client != nil, "vectorizePage non-nil openaiClient")
+
+	strings := *splitTextIntoChunks(page.content, 512)
+
+	inputUnion := openai.EmbeddingNewParamsInputUnion(openai.EmbeddingNewParamsInputArrayOfStrings(strings))
+	embedding, err := client.Embeddings.New(context.TODO(), openai.EmbeddingNewParams{
+		Input: openai.F(inputUnion),
+		Model: openai.F(openai.EmbeddingModelTextEmbedding3Small),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create embedding: %v", err)
+	}
+
+	if len(embedding.Data) == 0 {
+		return nil, fmt.Errorf("no embedding data returned")
+	}
+
+	return embedding.Data[0].Embedding, nil
+}
+
 func parseAIResponseRaw(response string) (*aiResponseRaw, error) {
 	// Split response into front matter and content
 	parts := strings.Split(response, "---")
@@ -295,7 +334,12 @@ func aiHandler(config *Config, w http.ResponseWriter, r *http.Request) {
 	// Prepare JSON response
 	if aiResponse.kind == kindPage {
 		writeWiki(config, aiResponse.page.path, aiResponse.page.content)
-		resp = fmt.Sprintf("saved %s", aiResponse.page.path)
+		vector, err := vectorizePage(config, aiResponse.page)
+		if err != nil {
+			http.Error(w, "Failed to vectorize page", http.StatusInternalServerError)
+			return
+		}
+		resp = fmt.Sprintf("saved vector of length %d for %s", len(vector), aiResponse.page.path)
 	} else {
 		resp = aiResponse.raw.content
 	}
