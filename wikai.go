@@ -172,6 +172,10 @@ type aiResponse struct {
 	raw  *aiResponseRaw // used if kind == kindRaw
 }
 
+type postResponse struct {
+	Response string `json:"response"`
+}
+
 func newRawResponse(resp *aiResponseRaw) *aiResponse {
 	return &aiResponse{
 		kind: kindRaw,
@@ -346,11 +350,7 @@ func aiHandler(config *Config, w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 
-	response := struct {
-		Response string `json:"response"`
-	}{
-		Response: resp,
-	}
+	response := postResponse{Response: resp}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
@@ -400,9 +400,7 @@ func cliAskGPT(args []string) {
 	defer resp.Body.Close()
 
 	// Read response
-	var result struct {
-		Response string `json:"response"`
-	}
+	var result postResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		log.Fatal("Failed to decode response:", err)
 	}
