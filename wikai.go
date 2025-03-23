@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	_ "embed"
 	"encoding/json"
 	"fmt"
@@ -14,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 
+	sqlite_vec "github.com/asg017/sqlite-vec-go-bindings/cgo"
+	_ "github.com/mattn/go-sqlite3"
 	"github.com/microcosm-cc/bluemonday"
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
@@ -66,23 +69,29 @@ func writeWiki(config *Config, pagePath string, content string) error {
 	return os.WriteFile(fullPath, []byte(content), 0644)
 }
 
+func wikiPath(config *Config) (string, error) {
+	wikiPath := config.WikiPath
+	if wikiPath[:2] == "~/" {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("Failed to get home directory: %v", err)
+		}
+		wikiPath = filepath.Join(homeDir, wikiPath[2:])
+	}
+	return wikiPath, nil
+}
+
 func wikiHandler(config *Config, w http.ResponseWriter, r *http.Request) {
 	// Get the page path from the URL, removing prefix
 	prefixLen := len(config.WikiPrefix)
 	pagePath := r.URL.Path[prefixLen:]
 
-	// Expand ~ to home directory in wiki path
-	wikiPath := config.WikiPath
-	if wikiPath[:2] == "~/" {
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			http.Error(w, "Failed to get home directory", http.StatusInternalServerError)
-			return
-		}
-		wikiPath = filepath.Join(homeDir, wikiPath[2:])
+	wikiPath, err := wikiPath(config)
+	if err != nil {
+		log.Printf("Failed to get Wiki path: %v", err)
+		http.Error(w, "Failed to get Wiki path", http.StatusInternalServerError)
+		return
 	}
-
-	// Get full path to markdown file
 	fullPath := filepath.Join(wikiPath, pagePath+".md")
 
 	// Read the markdown file
@@ -422,13 +431,72 @@ func installHandlers(config *Config) {
 	http.HandleFunc("/wiki/", handlerWithConfig(config, wikiHandler))
 }
 
+func sqliteVecVersion(db *sql.DB) (string, error) {
+	var vecVersion string
+	err := db.QueryRow("select vec_version()").Scan(&vecVersion)
+	if err != nil {
+		return "", err
+	}
+	return vecVersion, nil
+}
+
+func initSqlite(config *Config) *sql.DB {
+	assert(config != nil, "initSqlite nil config")
+
+	sqlite_vec.Auto()
+
+	wikiPath, err := wikiPath(config)
+	if err != nil {
+		log.Fatal("Failed to get Wiki path:", err)
+	}
+
+	dbPath := filepath.Join(wikiPath, "sqlite")
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+		log.Fatal("Failed to create database directory:", err)
+	}
+	db, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS embeddings(
+			path TEXT NOT NULL UNIQUE,
+			title TEXT,
+			embedding BLOB,
+			created_at INTEGER
+		);
+		CREATE INDEX IF NOT EXISTS embeddings_path ON embeddings(path);
+	`)
+	if err != nil {
+		log.Fatalf("failed to create tables: %v", err)
+	}
+
+	vecVersion, err := sqliteVecVersion(db)
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("sqlite_vec version %s\n", vecVersion)
+	return db
+}
+
+func mainServer() {
+	config := loadConfig()
+
+	db := initSqlite(config)
+	defer db.Close()
+
+	installHandlers(config)
+
+	log.Println("Server starting on port 8080...")
+	http.ListenAndServe(":8080", nil)
+}
+
 func main() {
 	if len(os.Args) >= 2 && os.Args[1] == "cli" {
 		cliAskGPT(os.Args[2:])
 		return
 	}
-	config := loadConfig()
-	installHandlers(config)
-	fmt.Println("Server starting on port 8080...")
-	http.ListenAndServe(":8080", nil)
+
+	mainServer()
 }
