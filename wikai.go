@@ -35,6 +35,21 @@ type Config struct {
 	OpenAIToken string `json:"openaiToken"`
 }
 
+type Ctx struct {
+	config *Config
+	db     *sql.DB
+}
+
+func newCtx(config *Config, db *sql.DB) Ctx {
+	assert(config != nil, "newCtx non-nil config")
+	assert(db != nil, "newCtx non-nil DB")
+
+	return Ctx{
+		config: config,
+		db:     db,
+	}
+}
+
 func loadConfig() *Config {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -64,8 +79,8 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "Hello, World!")
 }
 
-func writeWiki(config *Config, pagePath string, content string) error {
-	fullPath := filepath.Join(config.WikiPath, pagePath+".md")
+func writeWiki(ctx Ctx, pagePath string, content string) error {
+	fullPath := filepath.Join(ctx.config.WikiPath, pagePath+".md")
 	return os.WriteFile(fullPath, []byte(content), 0644)
 }
 
@@ -304,7 +319,7 @@ func convertAIResponse(raw *aiResponseRaw) (*aiResponse, error) {
 	return newRawResponse(raw), nil
 }
 
-func aiHandler(config *Config, w http.ResponseWriter, r *http.Request) {
+func aiHandler(ctx Ctx, w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -324,7 +339,7 @@ func aiHandler(config *Config, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	gptResp, err := defaultAskGPT(config, query)
+	gptResp, err := defaultAskGPT(ctx.config, query)
 	if err != nil {
 		http.Error(w, "Failed to process query", http.StatusInternalServerError)
 		return
@@ -346,8 +361,8 @@ func aiHandler(config *Config, w http.ResponseWriter, r *http.Request) {
 
 	// Prepare JSON response
 	if aiResponse.kind == kindPage {
-		writeWiki(config, aiResponse.page.path, aiResponse.page.content)
-		vector, err := vectorizePage(config, aiResponse.page)
+		writeWiki(ctx, aiResponse.page.path, aiResponse.page.content)
+		vector, err := vectorizePage(ctx.config, aiResponse.page)
 		if err != nil {
 			http.Error(w, "Failed to vectorize page", http.StatusInternalServerError)
 			return
@@ -416,18 +431,18 @@ func cliAskGPT(args []string) {
 	fmt.Println(result.Response)
 }
 
-func handlerWithConfig(config *Config, fn func(*Config, http.ResponseWriter, *http.Request)) http.HandlerFunc {
+func handlerWith[T interface{}](t T, fn func(T, http.ResponseWriter, *http.Request)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		fn(config, w, r)
+		fn(t, w, r)
 	}
 }
 
-func installHandlers(config *Config) {
-	assert(config != nil, "installHandlers nil config")
+func installHandlers(ctx Ctx) {
+	assert(ctx.config != nil, "installHandlers nil config")
 	http.HandleFunc("/", handler)
-	http.HandleFunc("/chat", handlerWithConfig(config, chatHandler))
-	http.HandleFunc("/ai", handlerWithConfig(config, aiHandler))
-	http.HandleFunc("/wiki/", handlerWithConfig(config, wikiHandler))
+	http.HandleFunc("/chat", handlerWith(ctx.config, chatHandler))
+	http.HandleFunc("/ai", handlerWith(ctx, aiHandler))
+	http.HandleFunc("/wiki/", handlerWith(ctx.config, wikiHandler))
 }
 
 func sqliteVecVersion(db *sql.DB) (string, error) {
@@ -484,8 +499,9 @@ func mainServer() {
 
 	db := initSqlite(config)
 	defer db.Close()
+	ctx := newCtx(config, db)
 
-	installHandlers(config)
+	installHandlers(ctx)
 
 	log.Println("Server starting on port 8080...")
 	http.ListenAndServe(":8080", nil)
