@@ -213,6 +213,7 @@ type aiResponseKind int
 const (
 	kindRaw aiResponseKind = iota
 	kindPage
+	kindSearch
 )
 
 type page struct {
@@ -222,10 +223,12 @@ type page struct {
 	stamp   int64
 }
 
+// FIXME: ugly wasteful sum type encoding; use interfaces
 type aiResponse struct {
-	kind aiResponseKind
-	page *page          // used if kind == kindPage
-	raw  *aiResponseRaw // used if kind == kindRaw
+	kind   aiResponseKind
+	page   *page          // used if kind == kindPage
+	raw    *aiResponseRaw // used if kind == kindRaw
+	search string         // used if kind == kindSearch
 }
 
 type postResponse struct {
@@ -251,6 +254,13 @@ func newPageResponse(title, content, path string, stamp int64) *aiResponse {
 			path:    path,
 			stamp:   stamp,
 		},
+	}
+}
+
+func newSearchResponse(query string) *aiResponse {
+	return &aiResponse{
+		kind:   kindSearch,
+		search: query,
 	}
 }
 
@@ -336,7 +346,8 @@ func parseAIResponseRaw(response string) (*aiResponseRaw, error) {
 }
 
 func convertAIResponse(raw *aiResponseRaw) (*aiResponse, error) {
-	if raw.kv["type"] == "newpage" {
+	switch raw.kv["type"] {
+	case "newpage":
 		// Parse timestamp
 		stamp, err := strconv.ParseInt(raw.kv["stamp"], 10, 64)
 		if err != nil || stamp == 0 {
@@ -361,9 +372,11 @@ func convertAIResponse(raw *aiResponseRaw) (*aiResponse, error) {
 			path,
 			stamp,
 		), nil
+	case "search":
+		return newSearchResponse(raw.content), nil
+	default:
+		return newRawResponse(raw), nil
 	}
-
-	return newRawResponse(raw), nil
 }
 
 func aiHandler(ctx Ctx, w http.ResponseWriter, r *http.Request) {
@@ -407,14 +420,17 @@ func aiHandler(ctx Ctx, w http.ResponseWriter, r *http.Request) {
 	resp := ""
 
 	// Prepare JSON response
-	if aiResponse.kind == kindPage {
+	switch aiResponse.kind {
+	case kindPage:
 		if err := writePage(ctx, aiResponse.page); err != nil {
 			log.Printf("Failed to write page %s: %v", aiResponse.page.path, err)
 			http.Error(w, "Failed to write page", http.StatusInternalServerError)
 			return
 		}
 		resp = fmt.Sprintf("saved page %s", aiResponse.page.path)
-	} else {
+	case kindSearch:
+		resp = fmt.Sprintf("search query: %s", aiResponse.search)
+	case kindRaw:
 		resp = aiResponse.raw.content
 	}
 
