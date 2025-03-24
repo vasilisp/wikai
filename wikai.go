@@ -43,8 +43,8 @@ type Ctx struct {
 }
 
 func newCtx(config *Config, db *sql.DB) Ctx {
-	assert(config != nil, "newCtx non-nil config")
-	assert(db != nil, "newCtx non-nil DB")
+	assert(config != nil, "newCtx nil config")
+	assert(db != nil, "newCtx nil DB")
 
 	return Ctx{
 		config: config,
@@ -171,7 +171,7 @@ func wikiHandler(config *Config, w http.ResponseWriter, r *http.Request) {
 }
 
 func openaiClient(config *Config) *openai.Client {
-	assert(config != nil, "openaiClient non-nil config")
+	assert(config != nil, "openaiClient nil config")
 	assert(config.OpenAIToken != "", "openaiClient non-empty OpenAIToken")
 	return openai.NewClient(
 		option.WithAPIKey(config.OpenAIToken),
@@ -184,7 +184,7 @@ func askGPT(config *Config, systemMessage string, userMessage string) (string, e
 	}
 
 	client := openaiClient(config)
-	assert(client != nil, "askGPT non-nil openaiClient")
+	assert(client != nil, "askGPT nil openaiClient")
 
 	chatCompletion, err := client.Chat.Completions.New(context.TODO(), openai.ChatCompletionNewParams{
 		Messages: openai.F([]openai.ChatCompletionMessageParamUnion{
@@ -277,7 +277,7 @@ func vectorizePage(config *Config, page *page) ([]float64, error) {
 
 	// Create embedding request
 	client := openaiClient(config)
-	assert(client != nil, "vectorizePage non-nil openaiClient")
+	assert(client != nil, "vectorizePage nil openaiClient")
 
 	strings := *splitTextIntoChunks(page.content, 512)
 
