@@ -31,9 +31,10 @@ func assert(condition bool, msg string) {
 }
 
 type Config struct {
-	WikiPath    string `json:"wikiPath"`
-	WikiPrefix  string `json:"wikiPrefix,omitempty"`
-	OpenAIToken string `json:"openaiToken"`
+	WikiPath            string `json:"wikiPath"`
+	WikiPrefix          string `json:"wikiPrefix,omitempty"`
+	OpenAIToken         string `json:"openaiToken"`
+	EmbeddingDimensions int    `json:"embeddingDimensions,omitempty"`
 }
 
 type Ctx struct {
@@ -83,7 +84,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 func blobOfFloat64s(floats []float64) []byte {
 	buf := new(bytes.Buffer)
 	for _, f := range floats {
-		binary.Write(buf, binary.LittleEndian, float32(f))
+		binary.Write(buf, binary.LittleEndian, f)
 	}
 	return buf.Bytes()
 }
@@ -281,9 +282,15 @@ func vectorizePage(config *Config, page *page) ([]float64, error) {
 	strings := *splitTextIntoChunks(page.content, 512)
 
 	inputUnion := openai.EmbeddingNewParamsInputUnion(openai.EmbeddingNewParamsInputArrayOfStrings(strings))
+	embeddingDimensions := int64(config.EmbeddingDimensions)
+	if embeddingDimensions <= 0 {
+		embeddingDimensions = 1536
+	}
+	assert(embeddingDimensions > 0, "vectorizePage non-positive embeddingDimensions")
 	embedding, err := client.Embeddings.New(context.TODO(), openai.EmbeddingNewParams{
-		Input: openai.F(inputUnion),
-		Model: openai.F(openai.EmbeddingModelTextEmbedding3Small),
+		Input:      openai.F(inputUnion),
+		Model:      openai.F(openai.EmbeddingModelTextEmbedding3Small),
+		Dimensions: openai.F(embeddingDimensions),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create embedding: %v", err)
