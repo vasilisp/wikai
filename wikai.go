@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	_ "embed"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -79,9 +80,43 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "Hello, World!")
 }
 
-func writeWiki(ctx Ctx, pagePath string, content string) error {
-	fullPath := filepath.Join(ctx.config.WikiPath, pagePath+".md")
-	return os.WriteFile(fullPath, []byte(content), 0644)
+func blobOfFloat64s(floats []float64) []byte {
+	buf := new(bytes.Buffer)
+	for _, f := range floats {
+		binary.Write(buf, binary.LittleEndian, float32(f))
+	}
+	return buf.Bytes()
+}
+
+func writePage(ctx Ctx, page *page) error {
+	fullPath := filepath.Join(ctx.config.WikiPath, page.path+".md")
+
+	// FIXME transactional write+insert
+	if err := os.WriteFile(fullPath, []byte(page.content), 0644); err != nil {
+		return fmt.Errorf("Failed to write page: %v", err)
+	} else {
+		log.Printf("wrote page %s at %s", page.path, fullPath)
+	}
+
+	vector, err := vectorizePage(ctx.config, page)
+	if err != nil {
+		return fmt.Errorf("Failed to vectorize page: %v", err)
+	} else {
+		log.Printf("vectorized page %s", page.path)
+	}
+
+	// Insert into SQLite DB
+	if _, err := ctx.db.Exec(`
+			INSERT INTO embeddings(path, created_at, embedding)
+			VALUES (?, ?, ?)
+			ON CONFLICT(path) DO NOTHING
+		    `, page.path, page.stamp, blobOfFloat64s(vector)); err != nil {
+		return fmt.Errorf("Failed to update database: %v", err)
+	} else {
+		log.Printf("updated database for page %s", page.path)
+	}
+
+	return nil
 }
 
 func wikiPath(config *Config) (string, error) {
@@ -364,13 +399,12 @@ func aiHandler(ctx Ctx, w http.ResponseWriter, r *http.Request) {
 
 	// Prepare JSON response
 	if aiResponse.kind == kindPage {
-		writeWiki(ctx, aiResponse.page.path, aiResponse.page.content)
-		vector, err := vectorizePage(ctx.config, aiResponse.page)
-		if err != nil {
-			http.Error(w, "Failed to vectorize page", http.StatusInternalServerError)
+		if err := writePage(ctx, aiResponse.page); err != nil {
+			log.Printf("Failed to write page %s: %v", aiResponse.page.path, err)
+			http.Error(w, "Failed to write page", http.StatusInternalServerError)
 			return
 		}
-		resp = fmt.Sprintf("saved vector of length %d for %s", len(vector), aiResponse.page.path)
+		resp = fmt.Sprintf("saved page %s", aiResponse.page.path)
 	} else {
 		resp = aiResponse.raw.content
 	}
@@ -479,9 +513,8 @@ func initSqlite(config *Config) *sql.DB {
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS embeddings(
 			path TEXT NOT NULL UNIQUE,
-			title TEXT,
-			embedding BLOB,
-			created_at INTEGER
+			embedding BLOB NOT NULL,
+			created_at INTEGER NOT NULL
 		);
 		CREATE INDEX IF NOT EXISTS embeddings_path ON embeddings(path);
 	`)
