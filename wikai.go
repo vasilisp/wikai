@@ -5,7 +5,6 @@ import (
 	"context"
 	"database/sql"
 	_ "embed"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -81,14 +80,6 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "Hello, World!")
 }
 
-func blobOfFloat64s(floats []float64) []byte {
-	buf := new(bytes.Buffer)
-	for _, f := range floats {
-		binary.Write(buf, binary.LittleEndian, f)
-	}
-	return buf.Bytes()
-}
-
 func writePage(ctx Ctx, page *page) error {
 	fullPath := filepath.Join(ctx.config.WikiPath, page.path+".md")
 
@@ -106,12 +97,17 @@ func writePage(ctx Ctx, page *page) error {
 		log.Printf("vectorized page %s", page.path)
 	}
 
+	blob, err := sqlite_vec.SerializeFloat32(vector)
+	if err != nil {
+		return fmt.Errorf("Failed to serialize vector: %v", err)
+	}
+
 	// Insert into SQLite DB
 	if _, err := ctx.db.Exec(`
 			INSERT INTO embeddings(path, created_at, embedding)
 			VALUES (?, ?, ?)
 			ON CONFLICT(path) DO NOTHING
-		    `, page.path, page.stamp, blobOfFloat64s(vector)); err != nil {
+		    `, page.path, page.stamp, blob); err != nil {
 		return fmt.Errorf("Failed to update database: %v", err)
 	} else {
 		log.Printf("updated database for page %s", page.path)
@@ -271,7 +267,7 @@ func splitTextIntoChunks(text string, chunkSize int) *[]string {
 	return &chunks
 }
 
-func vectorizePage(config *Config, page *page) ([]float64, error) {
+func vectorizePage(config *Config, page *page) ([]float32, error) {
 	assert(config != nil, "vectorizePage nil config")
 	assert(page != nil, "vectorizePage nil page")
 
@@ -300,7 +296,13 @@ func vectorizePage(config *Config, page *page) ([]float64, error) {
 		return nil, fmt.Errorf("no embedding data returned")
 	}
 
-	return embedding.Data[0].Embedding, nil
+	vector := embedding.Data[0].Embedding
+	vectorFloat32 := make([]float32, len(vector))
+	for i, v := range vector {
+		vectorFloat32[i] = float32(v)
+	}
+
+	return vectorFloat32, nil
 }
 
 func parseAIResponseRaw(response string) (*aiResponseRaw, error) {
