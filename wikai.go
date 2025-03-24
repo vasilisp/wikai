@@ -208,6 +208,9 @@ func newRawResponse(resp *aiResponseRaw) *aiResponse {
 }
 
 func newPageResponse(title, content, path string, stamp int64) *aiResponse {
+	assert(path != "", "newPageResponse non-empty path")
+	assert(stamp != 0, "newPageResponse non-zero stamp")
+
 	return &aiResponse{
 		kind: kindPage,
 		page: &page{
@@ -292,7 +295,7 @@ func convertAIResponse(raw *aiResponseRaw) (*aiResponse, error) {
 	if raw.kv["type"] == "newpage" {
 		// Parse timestamp
 		stamp, err := strconv.ParseInt(raw.kv["stamp"], 10, 64)
-		if err != nil {
+		if err != nil || stamp == 0 {
 			return nil, fmt.Errorf("invalid timestamp: %v", err)
 		}
 
@@ -304,7 +307,7 @@ func convertAIResponse(raw *aiResponseRaw) (*aiResponse, error) {
 		title := strings.TrimSpace(strings.TrimPrefix(lines[0], "#"))
 
 		path, ok := raw.kv["path"]
-		if !ok {
+		if !ok || path == "" {
 			return nil, fmt.Errorf("missing path field")
 		}
 
