@@ -384,8 +384,7 @@ func cliAskGPT(args []string) {
 		// Read from stdin
 		input, err := io.ReadAll(os.Stdin)
 		if err != nil {
-			fmt.Println("Failed to read from stdin")
-			os.Exit(1)
+			log.Fatal("Failed to read from stdin:", err)
 		}
 		query = string(input)
 	} else {
