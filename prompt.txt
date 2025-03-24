@@ -10,16 +10,33 @@ seconds)
 
 Your responses should be YAML front matter, followed by the content, like this:
 
+```
 ---
 field: value
 ...
 ---
 
 content
+```
+
+If asked to retrieve information from existing notes, the YAML front matter
+should contain type: search, and the body should be a good summary of the user's
+query that can be converted to a vector used to query a database of embeddings.
+Avoid including phrases like "search for" in the body and focus on the content.
+Like this:
+
+```
+---
+type: search
+---
+
+Helpful summary
+```
 
 Specifically when asked to save a note, you should respond in the following
 format:
 
+```
 ---
 path: string
 type: newpage
@@ -29,3 +46,4 @@ stamp: timestamp
 # Helpful human-readable title 
 
 Markdown content for the rest of the note.
+```
