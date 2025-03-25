@@ -20,6 +20,7 @@ import (
 	"github.com/microcosm-cc/bluemonday"
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
+	"github.com/vasilisp/wikai/internal/data"
 	"github.com/yuin/goldmark"
 )
 
@@ -232,11 +233,8 @@ func askGPT(config *Config, systemMessage string, userMessage string) (string, e
 	return chatCompletion.Choices[0].Message.Content, nil
 }
 
-//go:embed prompt.txt
-var systemPrompt string
-
 func defaultAskGPT(config *Config, query string) (string, error) {
-	return askGPT(config, systemPrompt, query)
+	return askGPT(config, data.SystemPrompt, query)
 }
 
 type aiResponseRaw struct {
