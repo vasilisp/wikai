@@ -1,10 +1,8 @@
-package main
+package server
 
 import (
 	"bytes"
-	"context"
 	"database/sql"
-	_ "embed"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,73 +13,37 @@ import (
 	"strconv"
 	"strings"
 
-	sqlite_vec "github.com/asg017/sqlite-vec-go-bindings/cgo"
-	_ "github.com/mattn/go-sqlite3"
 	"github.com/microcosm-cc/bluemonday"
-	"github.com/openai/openai-go"
-	"github.com/openai/openai-go/option"
-	"github.com/vasilisp/wikai/internal/data"
+	"github.com/vasilisp/wikai/internal/openai"
+	"github.com/vasilisp/wikai/internal/sqlite"
+	"github.com/vasilisp/wikai/internal/util"
 	"github.com/yuin/goldmark"
 )
 
-func assert(condition bool, msg string) {
-	if !condition {
-		log.Fatalf("Assertion failed: %s", msg)
-	}
-}
-
-type Config struct {
-	WikiPath            string `json:"wikiPath"`
-	WikiPrefix          string `json:"wikiPrefix,omitempty"`
-	OpenAIToken         string `json:"openaiToken"`
-	EmbeddingDimensions int    `json:"embeddingDimensions,omitempty"`
-}
-
-type Ctx struct {
-	config *Config
+type ctx struct {
+	config *config
 	db     *sql.DB
+	openai *openai.Client
 }
 
-func newCtx(config *Config, db *sql.DB) Ctx {
-	assert(config != nil, "newCtx nil config")
-	assert(db != nil, "newCtx nil DB")
+func newCtx(config *config, db *sql.DB) *ctx {
+	util.Assert(config != nil, "newCtx nil config")
+	util.Assert(db != nil, "newCtx nil DB")
 
-	return Ctx{
+	openai := openai.NewClient(config.OpenAIToken, config.EmbeddingDimensions)
+
+	return &ctx{
 		config: config,
 		db:     db,
+		openai: openai,
 	}
-}
-
-func loadConfig() *Config {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		log.Fatal("Failed to get home directory:", err)
-	}
-
-	configPath := filepath.Join(homeDir, ".config", "wikai.json")
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		log.Fatal("Failed to read config file:", err)
-	}
-
-	var config Config
-	if err := json.Unmarshal(data, &config); err != nil {
-		log.Fatal("Failed to parse config file:", err)
-	}
-
-	// Set default wiki prefix if not specified
-	if config.WikiPrefix == "" {
-		config.WikiPrefix = "/wikai"
-	}
-
-	return &config
 }
 
 func handler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "Hello, World!")
 }
 
-func writePage(ctx Ctx, page *page) error {
+func writePage(ctx *ctx, page *page) error {
 	fullPath := filepath.Join(ctx.config.WikiPath, page.path+".md")
 
 	// FIXME transactional write+insert
@@ -91,92 +53,38 @@ func writePage(ctx Ctx, page *page) error {
 		log.Printf("wrote page %s at %s", page.path, fullPath)
 	}
 
-	vector, err := vectorizePage(ctx.config, page)
+	vector, err := ctx.openai.Embed(page.content)
 	if err != nil {
 		return fmt.Errorf("Failed to vectorize page: %v", err)
 	} else {
 		log.Printf("vectorized page %s", page.path)
 	}
 
-	blob, err := sqlite_vec.SerializeFloat32(vector)
-	if err != nil {
-		return fmt.Errorf("Failed to serialize vector: %v", err)
-	}
-
-	// Insert into SQLite DB
-	if _, err := ctx.db.Exec(`
-			INSERT INTO embeddings(path, created_at, embedding)
-			VALUES (?, ?, ?)
-			ON CONFLICT(path) DO NOTHING
-		    `, page.path, page.stamp, blob); err != nil {
-		return fmt.Errorf("Failed to update database: %v", err)
-	} else {
-		log.Printf("updated database for page %s", page.path)
-	}
-
-	return nil
+	return sqlite.Insert(ctx.db, page.path, page.stamp, vector)
 }
 
-func similarPages(ctx Ctx, vector []float32) ([]string, error) {
-	blob, err := sqlite_vec.SerializeFloat32(vector)
-	if err != nil {
-		return nil, fmt.Errorf("failed to serialize vector: %v", err)
-	}
+func searchPages(ctx *ctx, query string) ([]string, error) {
+	util.Assert(ctx != nil, "searchPages nil ctx")
 
-	rows, err := ctx.db.Query(`
-		SELECT embeddings.path
-		FROM embeddings
-		ORDER BY vec_distance_cosine(embedding, ?) ASC
-		LIMIT 5
-	`, blob)
-	if err != nil {
-		return nil, fmt.Errorf("similarPages query error: %v", err)
-	}
-	defer rows.Close()
-
-	var paths []string
-	for rows.Next() {
-		var path string
-		if err := rows.Scan(&path); err != nil {
-			return nil, fmt.Errorf("similarPages scan error: %v", err)
-		}
-		paths = append(paths, path)
-	}
-	return paths, nil
-}
-
-func searchPages(ctx Ctx, query string) ([]string, error) {
-	vector, err := vectorizeString(ctx.config, query)
+	vector, err := ctx.openai.Embed(query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to vectorize query: %v", err)
 	}
-	return similarPages(ctx, vector)
+	return sqlite.SimilarPages(ctx.db, vector)
 }
 
-func wikiPath(config *Config) (string, error) {
-	wikiPath := config.WikiPath
-	if wikiPath[:2] == "~/" {
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			return "", fmt.Errorf("Failed to get home directory: %v", err)
-		}
-		wikiPath = filepath.Join(homeDir, wikiPath[2:])
-	}
-	return wikiPath, nil
-}
-
-func wikiHandler(config *Config, w http.ResponseWriter, r *http.Request) {
+func wikiHandler(ctx *ctx, w http.ResponseWriter, r *http.Request) {
 	// Get the page path from the URL, removing prefix
-	prefixLen := len(config.WikiPrefix)
+	prefixLen := len(ctx.config.WikiPrefix)
 	pagePath := r.URL.Path[prefixLen:]
 
-	wikiPath, err := wikiPath(config)
+	wikiPath0, err := wikiPath(ctx.config)
 	if err != nil {
 		log.Printf("Failed to get Wiki path: %v", err)
 		http.Error(w, "Failed to get Wiki path", http.StatusInternalServerError)
 		return
 	}
-	fullPath := filepath.Join(wikiPath, pagePath+".md")
+	fullPath := filepath.Join(wikiPath0, pagePath+".md")
 
 	// Read the markdown file
 	content, err := os.ReadFile(fullPath)
@@ -201,40 +109,6 @@ func wikiHandler(config *Config, w http.ResponseWriter, r *http.Request) {
 	// Write response
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write(html)
-}
-
-func openaiClient(config *Config) *openai.Client {
-	assert(config != nil, "openaiClient nil config")
-	assert(config.OpenAIToken != "", "openaiClient non-empty OpenAIToken")
-	return openai.NewClient(
-		option.WithAPIKey(config.OpenAIToken),
-	)
-}
-
-func askGPT(config *Config, systemMessage string, userMessage string) (string, error) {
-	if config.OpenAIToken == "" {
-		return "", fmt.Errorf("OpenAI token not configured")
-	}
-
-	client := openaiClient(config)
-	assert(client != nil, "askGPT nil openaiClient")
-
-	chatCompletion, err := client.Chat.Completions.New(context.TODO(), openai.ChatCompletionNewParams{
-		Messages: openai.F([]openai.ChatCompletionMessageParamUnion{
-			openai.SystemMessage(systemMessage),
-			openai.UserMessage(userMessage),
-		}),
-		Model: openai.F(openai.ChatModelGPT4o),
-	})
-	if err != nil {
-		return "", fmt.Errorf("ChatCompletion error: %v", err)
-	}
-
-	return chatCompletion.Choices[0].Message.Content, nil
-}
-
-func defaultAskGPT(config *Config, query string) (string, error) {
-	return askGPT(config, data.SystemPrompt, query)
 }
 
 type aiResponseRaw struct {
@@ -277,8 +151,8 @@ func newRawResponse(resp *aiResponseRaw) *aiResponse {
 }
 
 func newPageResponse(title, content, path string, stamp int64) *aiResponse {
-	assert(path != "", "newPageResponse non-empty path")
-	assert(stamp != 0, "newPageResponse non-zero stamp")
+	util.Assert(path != "", "newPageResponse non-empty path")
+	util.Assert(stamp != 0, "newPageResponse non-zero stamp")
 
 	return &aiResponse{
 		kind: kindPage,
@@ -296,63 +170,6 @@ func newSearchResponse(query string) *aiResponse {
 		kind:   kindSearch,
 		search: query,
 	}
-}
-
-func splitTextIntoChunks(text string, chunkSize int) *[]string {
-	var chunks []string
-	runes := []rune(text) // Handle multi-byte characters
-	for i := 0; i < len(runes); i += chunkSize {
-		end := i + chunkSize
-		if end > len(runes) {
-			end = len(runes)
-		}
-		chunks = append(chunks, string(runes[i:end]))
-	}
-	return &chunks
-}
-
-func vectorizeString(config *Config, str string) ([]float32, error) {
-	assert(config != nil, "vectorizeString nil config")
-	assert(str != "", "vectorizeString empty string")
-
-	// Create embedding request
-	client := openaiClient(config)
-	assert(client != nil, "vectorizePage nil openaiClient")
-
-	strings := *splitTextIntoChunks(str, 512)
-
-	inputUnion := openai.EmbeddingNewParamsInputUnion(openai.EmbeddingNewParamsInputArrayOfStrings(strings))
-	embeddingDimensions := int64(config.EmbeddingDimensions)
-	if embeddingDimensions <= 0 {
-		embeddingDimensions = 1536
-	}
-	assert(embeddingDimensions > 0, "vectorizePage non-positive embeddingDimensions")
-	embedding, err := client.Embeddings.New(context.TODO(), openai.EmbeddingNewParams{
-		Input:      openai.F(inputUnion),
-		Model:      openai.F(openai.EmbeddingModelTextEmbedding3Small),
-		Dimensions: openai.F(embeddingDimensions),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create embedding: %v", err)
-	}
-
-	if len(embedding.Data) == 0 {
-		return nil, fmt.Errorf("no embedding data returned")
-	}
-
-	vector := embedding.Data[0].Embedding
-	vectorFloat32 := make([]float32, len(vector))
-	for i, v := range vector {
-		vectorFloat32[i] = float32(v)
-	}
-
-	return vectorFloat32, nil
-}
-
-func vectorizePage(config *Config, page *page) ([]float32, error) {
-	assert(config != nil, "vectorizePage nil config")
-	assert(page != nil, "vectorizePage nil page")
-	return vectorizeString(config, page.content)
 }
 
 func parseAIResponseRaw(response string) (*aiResponseRaw, error) {
@@ -420,7 +237,7 @@ func convertAIResponse(raw *aiResponseRaw) (*aiResponse, error) {
 	}
 }
 
-func aiHandler(ctx Ctx, w http.ResponseWriter, r *http.Request) {
+func aiHandler(ctx *ctx, w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -440,7 +257,7 @@ func aiHandler(ctx Ctx, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	gptResp, err := defaultAskGPT(ctx.config, query)
+	gptResp, err := ctx.openai.DefaultAskGPT(query)
 	if err != nil {
 		http.Error(w, "Failed to process query", http.StatusInternalServerError)
 		return
@@ -492,9 +309,9 @@ func aiHandler(ctx Ctx, w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func chatHandler(config *Config, w http.ResponseWriter, r *http.Request) {
+func chatHandler(ctx *ctx, w http.ResponseWriter, r *http.Request) {
 	_ = r
-	resp, err := defaultAskGPT(config, "What do I have to do today?")
+	resp, err := ctx.openai.DefaultAskGPT("What do I have to do today?")
 	if err != nil {
 		http.Error(w, "Failed to ask GPT", http.StatusInternalServerError)
 		return
@@ -553,27 +370,16 @@ func handlerWith[T interface{}](t T, fn func(T, http.ResponseWriter, *http.Reque
 	}
 }
 
-func installHandlers(ctx Ctx) {
-	assert(ctx.config != nil, "installHandlers nil config")
+func installHandlers(ctx *ctx) {
+	util.Assert(ctx != nil, "installHandlers nil ctx")
 	http.HandleFunc("/", handler)
-	http.HandleFunc("/chat", handlerWith(ctx.config, chatHandler))
+	http.HandleFunc("/chat", handlerWith(ctx, chatHandler))
 	http.HandleFunc("/ai", handlerWith(ctx, aiHandler))
-	http.HandleFunc("/wiki/", handlerWith(ctx.config, wikiHandler))
+	http.HandleFunc("/wiki/", handlerWith(ctx, wikiHandler))
 }
 
-func sqliteVecVersion(db *sql.DB) (string, error) {
-	var vecVersion string
-	err := db.QueryRow("select vec_version()").Scan(&vecVersion)
-	if err != nil {
-		return "", err
-	}
-	return vecVersion, nil
-}
-
-func initSqlite(config *Config) *sql.DB {
-	assert(config != nil, "initSqlite nil config")
-
-	sqlite_vec.Auto()
+func initSqlite(config *config) *sql.DB {
+	util.Assert(config != nil, "initSqlite nil config")
 
 	wikiPath, err := wikiPath(config)
 	if err != nil {
@@ -581,32 +387,7 @@ func initSqlite(config *Config) *sql.DB {
 	}
 
 	dbPath := filepath.Join(wikiPath, "sqlite")
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
-		log.Fatal("Failed to create database directory:", err)
-	}
-	db, err := sql.Open("sqlite3", dbPath)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	_, err = db.Exec(`
-		CREATE TABLE IF NOT EXISTS embeddings(
-			path TEXT NOT NULL UNIQUE,
-			embedding BLOB NOT NULL,
-			created_at INTEGER NOT NULL
-		);
-		CREATE INDEX IF NOT EXISTS embeddings_path ON embeddings(path);
-	`)
-	if err != nil {
-		log.Fatalf("failed to create tables: %v", err)
-	}
-
-	vecVersion, err := sqliteVecVersion(db)
-	if err != nil {
-		log.Fatal(err)
-	}
-	log.Printf("sqlite_vec version %s\n", vecVersion)
-	return db
+	return sqlite.Init(dbPath)
 }
 
 func mainServer() {
@@ -622,7 +403,7 @@ func mainServer() {
 	http.ListenAndServe(":8080", nil)
 }
 
-func main() {
+func Main() {
 	if len(os.Args) >= 2 && os.Args[1] == "cli" {
 		cliAskGPT(os.Args[2:])
 		return
