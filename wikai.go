@@ -116,6 +116,42 @@ func writePage(ctx Ctx, page *page) error {
 	return nil
 }
 
+func similarPages(ctx Ctx, vector []float32) ([]string, error) {
+	blob, err := sqlite_vec.SerializeFloat32(vector)
+	if err != nil {
+		return nil, fmt.Errorf("failed to serialize vector: %v", err)
+	}
+
+	rows, err := ctx.db.Query(`
+		SELECT embeddings.path
+		FROM embeddings
+		ORDER BY vec_distance_cosine(embedding, ?) ASC
+		LIMIT 5
+	`, blob)
+	if err != nil {
+		return nil, fmt.Errorf("similarPages query error: %v", err)
+	}
+	defer rows.Close()
+
+	var paths []string
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			return nil, fmt.Errorf("similarPages scan error: %v", err)
+		}
+		paths = append(paths, path)
+	}
+	return paths, nil
+}
+
+func searchPages(ctx Ctx, query string) ([]string, error) {
+	vector, err := vectorizeString(ctx.config, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to vectorize query: %v", err)
+	}
+	return similarPages(ctx, vector)
+}
+
 func wikiPath(config *Config) (string, error) {
 	wikiPath := config.WikiPath
 	if wikiPath[:2] == "~/" {
@@ -277,15 +313,15 @@ func splitTextIntoChunks(text string, chunkSize int) *[]string {
 	return &chunks
 }
 
-func vectorizePage(config *Config, page *page) ([]float32, error) {
-	assert(config != nil, "vectorizePage nil config")
-	assert(page != nil, "vectorizePage nil page")
+func vectorizeString(config *Config, str string) ([]float32, error) {
+	assert(config != nil, "vectorizeString nil config")
+	assert(str != "", "vectorizeString empty string")
 
 	// Create embedding request
 	client := openaiClient(config)
 	assert(client != nil, "vectorizePage nil openaiClient")
 
-	strings := *splitTextIntoChunks(page.content, 512)
+	strings := *splitTextIntoChunks(str, 512)
 
 	inputUnion := openai.EmbeddingNewParamsInputUnion(openai.EmbeddingNewParamsInputArrayOfStrings(strings))
 	embeddingDimensions := int64(config.EmbeddingDimensions)
@@ -313,6 +349,12 @@ func vectorizePage(config *Config, page *page) ([]float32, error) {
 	}
 
 	return vectorFloat32, nil
+}
+
+func vectorizePage(config *Config, page *page) ([]float32, error) {
+	assert(config != nil, "vectorizePage nil config")
+	assert(page != nil, "vectorizePage nil page")
+	return vectorizeString(config, page.content)
 }
 
 func parseAIResponseRaw(response string) (*aiResponseRaw, error) {
@@ -429,7 +471,14 @@ func aiHandler(ctx Ctx, w http.ResponseWriter, r *http.Request) {
 		}
 		resp = fmt.Sprintf("saved page %s", aiResponse.page.path)
 	case kindSearch:
-		resp = fmt.Sprintf("search query: %s", aiResponse.search)
+		log.Printf("search query: %s", aiResponse.search)
+		pages, err := searchPages(ctx, aiResponse.search)
+		if err != nil {
+			log.Printf("Failed to search pages: %v", err)
+			http.Error(w, "Failed to search pages", http.StatusInternalServerError)
+			return
+		}
+		resp = fmt.Sprintf("search results: %v", pages)
 	case kindRaw:
 		resp = aiResponse.raw.content
 	}
@@ -486,6 +535,12 @@ func cliAskGPT(args []string) {
 
 	// Read response
 	var result postResponse
+
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("Failed to get response: %s", resp.Status)
+		os.Exit(1)
+	}
+
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		log.Fatal("Failed to decode response:", err)
 	}
