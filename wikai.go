@@ -384,7 +384,8 @@ func parseAIResponseRaw(response string) (*aiResponseRaw, error) {
 		return nil, fmt.Errorf("invalid response format: missing type field")
 	}
 
-	return &aiResponseRaw{kv: result, content: parts[2]}, nil
+	content := strings.TrimLeft(parts[2], " \t\n\r")
+	return &aiResponseRaw{kv: result, content: content}, nil
 }
 
 func convertAIResponse(raw *aiResponseRaw) (*aiResponse, error) {
