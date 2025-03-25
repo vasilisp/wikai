@@ -23,7 +23,7 @@ If asked to retrieve information from existing notes, the YAML front matter
 should contain type: search, and the body should be a good summary of the user's
 query that can be converted to a vector used to query a database of embeddings.
 Avoid including phrases like "search for" in the body and focus on the content.
-Like this:
+Like this (the backticks delimit the content I want and should not be included):
 
 ```
 ---
