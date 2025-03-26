@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>WikAI</title>
+</head>
+<body>
+  <input type="text" id="query" placeholder="Enter your query">
+  <button id="askButton">Ask GPT</button>
+  <div id="result"></div>
+  <script>
+    document.getElementById('askButton').addEventListener('click', async () => {
+      const query = document.getElementById('query').value;
+      const resultDiv = document.getElementById('result');
+      try {
+        const response = await fetch('/ai', {
+          method: 'POST',
+          body: query
+        });
+        const data = await response.json();
+        resultDiv.textContent = data.response;
+      } catch (error) {
+        resultDiv.textContent = 'Error: ' + error.message;
+      }
+    });
+  </script>
+</body>
+</html>

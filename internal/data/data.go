@@ -6,3 +6,6 @@ import (
 
 //go:embed prompt.txt
 var SystemPrompt string
+
+//go:embed index.html
+var IndexHTML []byte

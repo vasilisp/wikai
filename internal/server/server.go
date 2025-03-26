@@ -13,6 +13,7 @@ import (
 
 	"github.com/microcosm-cc/bluemonday"
 	"github.com/vasilisp/wikai/internal/api"
+	"github.com/vasilisp/wikai/internal/data"
 	"github.com/vasilisp/wikai/internal/openai"
 	"github.com/vasilisp/wikai/internal/sqlite"
 	"github.com/vasilisp/wikai/internal/util"
@@ -200,7 +201,18 @@ func handlerWith[T interface{}](t T, fn func(T, http.ResponseWriter, *http.Reque
 
 func installHandlers(ctx *ctx) {
 	util.Assert(ctx != nil, "installHandlers nil ctx")
-	http.HandleFunc("/", handler)
+
+	// Serve index.html at the root
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			log.Printf("serving index.html")
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Write(data.IndexHTML)
+			return
+		}
+		handler(w, r) // Your existing default handler
+	})
+
 	http.HandleFunc("/chat", handlerWith(ctx, chatHandler))
 	http.HandleFunc(api.PostPath, handlerWith(ctx, aiHandler))
 	http.HandleFunc("/wiki/", handlerWith(ctx, wikiHandler))
