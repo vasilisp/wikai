@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/microcosm-cc/bluemonday"
 	"github.com/vasilisp/wikai/internal/api"
@@ -193,51 +192,6 @@ func chatHandler(ctx *ctx, w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "%s", resp)
 }
 
-func cliAskGPT(args []string) {
-	var query string
-
-	if len(args) == 0 {
-		// Read from stdin
-		input, err := io.ReadAll(os.Stdin)
-		if err != nil {
-			log.Fatal("Failed to read from stdin:", err)
-		}
-		query = string(input)
-	} else {
-		query = strings.Join(args, " ")
-	}
-
-	// Create HTTP client
-	client := &http.Client{}
-
-	// Create request
-	req, err := http.NewRequest("POST", "http://localhost:8080/ai", strings.NewReader(query))
-	if err != nil {
-		log.Fatal("Failed to create request:", err)
-	}
-
-	// Send request
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Fatal("Failed to send request:", err)
-	}
-	defer resp.Body.Close()
-
-	// Read response
-	var result api.PostResponse
-
-	if resp.StatusCode != http.StatusOK {
-		log.Printf("Failed to get response: %s", resp.Status)
-		os.Exit(1)
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		log.Fatal("Failed to decode response:", err)
-	}
-
-	fmt.Println(result.Response)
-}
-
 func handlerWith[T interface{}](t T, fn func(T, http.ResponseWriter, *http.Request)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		fn(t, w, r)
@@ -248,7 +202,7 @@ func installHandlers(ctx *ctx) {
 	util.Assert(ctx != nil, "installHandlers nil ctx")
 	http.HandleFunc("/", handler)
 	http.HandleFunc("/chat", handlerWith(ctx, chatHandler))
-	http.HandleFunc("/ai", handlerWith(ctx, aiHandler))
+	http.HandleFunc(api.PostPath, handlerWith(ctx, aiHandler))
 	http.HandleFunc("/wiki/", handlerWith(ctx, wikiHandler))
 }
 
@@ -264,7 +218,7 @@ func initSqlite(config *config) *sql.DB {
 	return sqlite.Init(dbPath)
 }
 
-func mainServer() {
+func Main() {
 	config := loadConfig()
 
 	db := initSqlite(config)
@@ -273,15 +227,6 @@ func mainServer() {
 
 	installHandlers(ctx)
 
-	log.Println("Server starting on port 8080...")
-	http.ListenAndServe(":8080", nil)
-}
-
-func Main() {
-	if len(os.Args) >= 2 && os.Args[1] == "cli" {
-		cliAskGPT(os.Args[2:])
-		return
-	}
-
-	mainServer()
+	log.Printf("Server starting on port %d...", config.Port)
+	http.ListenAndServe(fmt.Sprintf(":%d", config.Port), nil)
 }

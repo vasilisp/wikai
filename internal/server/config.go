@@ -13,6 +13,7 @@ type config struct {
 	WikiPrefix          string `json:"wikiPrefix,omitempty"`
 	OpenAIToken         string `json:"openaiToken"`
 	EmbeddingDimensions int    `json:"embeddingDimensions,omitempty"`
+	Port                int    `json:"port,omitempty"`
 }
 
 func loadConfig() *config {
@@ -35,6 +36,10 @@ func loadConfig() *config {
 	// Set default wiki prefix if not specified
 	if config.WikiPrefix == "" {
 		config.WikiPrefix = "/wikai"
+	}
+
+	if config.Port <= 0 {
+		config.Port = 8080
 	}
 
 	return &config
