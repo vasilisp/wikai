@@ -3,9 +3,12 @@ package openai
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
+	"github.com/vasilisp/wikai/internal/api"
 	"github.com/vasilisp/wikai/internal/data"
 	"github.com/vasilisp/wikai/internal/util"
 )
@@ -93,4 +96,93 @@ func (c *Client) AskGPT(systemMessage string, userMessage string) (string, error
 
 func (c *Client) DefaultAskGPT(userMessage string) (string, error) {
 	return c.AskGPT(data.SystemPrompt, userMessage)
+}
+
+type ResponseKind int
+
+const (
+	KindUnknown ResponseKind = iota
+	KindPage
+	KindSearch
+)
+
+type Response struct {
+	Kind    ResponseKind
+	KV      map[string]string
+	Content string
+}
+
+func responseKind(kv map[string]string) ResponseKind {
+	kind, ok := kv["type"]
+	if !ok {
+		return KindUnknown
+	}
+
+	switch kind {
+	case "page":
+		return KindPage
+	case "search":
+		return KindSearch
+	default:
+		return KindUnknown
+	}
+}
+
+func ParseResponse(response string) (*Response, error) {
+	// Split response into front matter and content
+	parts := strings.Split(response, "---")
+	if len(parts) < 3 {
+		return nil, fmt.Errorf("invalid response format: missing front matter")
+	}
+
+	// Parse YAML front matter
+	frontMatter := parts[1]
+	lines := strings.Split(strings.TrimSpace(frontMatter), "\n")
+
+	kv := make(map[string]string)
+	for _, line := range lines {
+		kvPair := strings.Split(line, ":")
+		if len(kvPair) != 2 {
+			continue
+		}
+		key := strings.TrimSpace(kvPair[0])
+		value := strings.TrimSpace(kvPair[1])
+		kv[key] = value
+	}
+
+	kind := responseKind(kv)
+	delete(kv, "type")
+	content := strings.TrimLeft(parts[2], " \t\n\r")
+
+	return &Response{Kind: kind, KV: kv, Content: content}, nil
+}
+
+func PageOfResponse(response *Response) (*api.Page, error) {
+	util.Assert(response != nil, "pageOfResponse nil response")
+	util.Assert(response.Kind == KindPage, "pageOfResponse not a page")
+
+	// Parse timestamp
+	stamp, err := strconv.ParseInt(response.KV["stamp"], 10, 64)
+	if err != nil || stamp == 0 {
+		return nil, fmt.Errorf("invalid timestamp: %v", err)
+	}
+
+	// Extract title from content
+	lines := strings.Split(strings.TrimSpace(response.Content), "\n")
+	if len(lines) == 0 {
+		return nil, fmt.Errorf("content is empty")
+	}
+	title := strings.TrimSpace(strings.TrimPrefix(lines[0], "#"))
+
+	path, ok := response.KV["path"]
+	if !ok || path == "" {
+		return nil, fmt.Errorf("missing path field")
+	}
+
+	return &api.Page{
+		Title:   title,
+		Content: response.Content,
+		Path:    path,
+		Stamp:   stamp,
+	}, nil
 }

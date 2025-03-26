@@ -10,10 +10,10 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/microcosm-cc/bluemonday"
+	"github.com/vasilisp/wikai/internal/api"
 	"github.com/vasilisp/wikai/internal/openai"
 	"github.com/vasilisp/wikai/internal/sqlite"
 	"github.com/vasilisp/wikai/internal/util"
@@ -43,24 +43,24 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "Hello, World!")
 }
 
-func writePage(ctx *ctx, page *page) error {
-	fullPath := filepath.Join(ctx.config.WikiPath, page.path+".md")
+func writePage(ctx *ctx, page *api.Page) error {
+	fullPath := filepath.Join(ctx.config.WikiPath, page.Path+".md")
 
 	// FIXME transactional write+insert
-	if err := os.WriteFile(fullPath, []byte(page.content), 0644); err != nil {
+	if err := os.WriteFile(fullPath, []byte(page.Content), 0644); err != nil {
 		return fmt.Errorf("Failed to write page: %v", err)
 	} else {
-		log.Printf("wrote page %s at %s", page.path, fullPath)
+		log.Printf("wrote page %s at %s", page.Path, fullPath)
 	}
 
-	vector, err := ctx.openai.Embed(page.content)
+	vector, err := ctx.openai.Embed(page.Content)
 	if err != nil {
 		return fmt.Errorf("Failed to vectorize page: %v", err)
 	} else {
-		log.Printf("vectorized page %s", page.path)
+		log.Printf("vectorized page %s", page.Path)
 	}
 
-	return sqlite.Insert(ctx.db, page.path, page.stamp, vector)
+	return sqlite.Insert(ctx.db, page.Path, page.Stamp, vector)
 }
 
 func searchPages(ctx *ctx, query string) ([]string, error) {
@@ -111,132 +111,6 @@ func wikiHandler(ctx *ctx, w http.ResponseWriter, r *http.Request) {
 	w.Write(html)
 }
 
-type aiResponseRaw struct {
-	kv      map[string]string
-	content string
-}
-
-type aiResponseKind int
-
-const (
-	kindRaw aiResponseKind = iota
-	kindPage
-	kindSearch
-)
-
-type page struct {
-	title   string
-	content string
-	path    string
-	stamp   int64
-}
-
-// FIXME: ugly wasteful sum type encoding; use interfaces
-type aiResponse struct {
-	kind   aiResponseKind
-	page   *page          // used if kind == kindPage
-	raw    *aiResponseRaw // used if kind == kindRaw
-	search string         // used if kind == kindSearch
-}
-
-type postResponse struct {
-	Response string `json:"response"`
-}
-
-func newRawResponse(resp *aiResponseRaw) *aiResponse {
-	return &aiResponse{
-		kind: kindRaw,
-		raw:  resp,
-	}
-}
-
-func newPageResponse(title, content, path string, stamp int64) *aiResponse {
-	util.Assert(path != "", "newPageResponse non-empty path")
-	util.Assert(stamp != 0, "newPageResponse non-zero stamp")
-
-	return &aiResponse{
-		kind: kindPage,
-		page: &page{
-			title:   title,
-			content: content,
-			path:    path,
-			stamp:   stamp,
-		},
-	}
-}
-
-func newSearchResponse(query string) *aiResponse {
-	return &aiResponse{
-		kind:   kindSearch,
-		search: query,
-	}
-}
-
-func parseAIResponseRaw(response string) (*aiResponseRaw, error) {
-	// Split response into front matter and content
-	parts := strings.Split(response, "---")
-	if len(parts) < 3 {
-		return nil, fmt.Errorf("invalid response format: missing front matter")
-	}
-
-	// Parse YAML front matter
-	frontMatter := parts[1]
-	lines := strings.Split(strings.TrimSpace(frontMatter), "\n")
-
-	result := make(map[string]string)
-	for _, line := range lines {
-		kv := strings.Split(line, ":")
-		if len(kv) != 2 {
-			continue
-		}
-		key := strings.TrimSpace(kv[0])
-		value := strings.TrimSpace(kv[1])
-		result[key] = value
-	}
-
-	// Ensure type field exists
-	if _, exists := result["type"]; !exists {
-		return nil, fmt.Errorf("invalid response format: missing type field")
-	}
-
-	content := strings.TrimLeft(parts[2], " \t\n\r")
-	return &aiResponseRaw{kv: result, content: content}, nil
-}
-
-func convertAIResponse(raw *aiResponseRaw) (*aiResponse, error) {
-	switch raw.kv["type"] {
-	case "newpage":
-		// Parse timestamp
-		stamp, err := strconv.ParseInt(raw.kv["stamp"], 10, 64)
-		if err != nil || stamp == 0 {
-			return nil, fmt.Errorf("invalid timestamp: %v", err)
-		}
-
-		// Extract title from content
-		lines := strings.Split(strings.TrimSpace(raw.content), "\n")
-		if len(lines) == 0 {
-			return nil, fmt.Errorf("content is empty")
-		}
-		title := strings.TrimSpace(strings.TrimPrefix(lines[0], "#"))
-
-		path, ok := raw.kv["path"]
-		if !ok || path == "" {
-			return nil, fmt.Errorf("missing path field")
-		}
-
-		return newPageResponse(
-			title,
-			raw.content,
-			path,
-			stamp,
-		), nil
-	case "search":
-		return newSearchResponse(raw.content), nil
-	default:
-		return newRawResponse(raw), nil
-	}
-}
-
 func aiHandler(ctx *ctx, w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -263,45 +137,45 @@ func aiHandler(ctx *ctx, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	raw, err := parseAIResponseRaw(gptResp)
+	aiResponse, err := openai.ParseResponse(gptResp)
 	if err != nil {
 		http.Error(w, "Failed to parse AI response", http.StatusInternalServerError)
-		return
-	}
-
-	aiResponse, err := convertAIResponse(raw)
-	if err != nil {
-		http.Error(w, "Failed to convert AI response", http.StatusInternalServerError)
 		return
 	}
 
 	resp := ""
 
 	// Prepare JSON response
-	switch aiResponse.kind {
-	case kindPage:
-		if err := writePage(ctx, aiResponse.page); err != nil {
-			log.Printf("Failed to write page %s: %v", aiResponse.page.path, err)
+	switch aiResponse.Kind {
+	case openai.KindPage:
+		page, err := openai.PageOfResponse(aiResponse)
+		if err != nil {
+			log.Printf("Failed to parse page: %v", err)
+			http.Error(w, "Failed to parse page AI response", http.StatusInternalServerError)
+			return
+		}
+		if err := writePage(ctx, page); err != nil {
+			log.Printf("Failed to write page %s: %v", page.Path, err)
 			http.Error(w, "Failed to write page", http.StatusInternalServerError)
 			return
 		}
-		resp = fmt.Sprintf("saved page %s", aiResponse.page.path)
-	case kindSearch:
-		log.Printf("search query: %s", aiResponse.search)
-		pages, err := searchPages(ctx, aiResponse.search)
+		resp = fmt.Sprintf("saved page %s", page.Path)
+	case openai.KindSearch:
+		log.Printf("search query: %s", aiResponse.Content)
+		pages, err := searchPages(ctx, aiResponse.Content)
 		if err != nil {
 			log.Printf("Failed to search pages: %v", err)
 			http.Error(w, "Failed to search pages", http.StatusInternalServerError)
 			return
 		}
 		resp = fmt.Sprintf("search results: %v", pages)
-	case kindRaw:
-		resp = aiResponse.raw.content
+	case openai.KindUnknown:
+		resp = aiResponse.Content
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 
-	response := postResponse{Response: resp}
+	response := api.PostResponse{Response: resp}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
@@ -350,7 +224,7 @@ func cliAskGPT(args []string) {
 	defer resp.Body.Close()
 
 	// Read response
-	var result postResponse
+	var result api.PostResponse
 
 	if resp.StatusCode != http.StatusOK {
 		log.Printf("Failed to get response: %s", resp.Status)
