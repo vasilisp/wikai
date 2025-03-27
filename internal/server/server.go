@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"text/template"
 
 	"github.com/microcosm-cc/bluemonday"
@@ -27,8 +28,11 @@ type ctx struct {
 	openai *openai.Client
 }
 
-func newCtx(config *config, db *sql.DB) *ctx {
+func newCtx() *ctx {
+	config := loadConfig()
 	util.Assert(config != nil, "newCtx nil config")
+
+	db := initSqlite(config)
 	util.Assert(db != nil, "newCtx nil DB")
 
 	openai := openai.NewClient(config.OpenAIToken, config.EmbeddingDimensions)
@@ -40,15 +44,15 @@ func newCtx(config *config, db *sql.DB) *ctx {
 	}
 }
 
-func writePage(ctx *ctx, page *api.Page) error {
-	fullPath := filepath.Join(ctx.config.WikiPath, page.Path+".md")
+func (ctx *ctx) Close() {
+	util.Assert(ctx != nil, "Close nil ctx")
+	util.Assert(ctx.db != nil, "Close nil DB")
+	ctx.db.Close()
+}
 
-	// FIXME transactional write+insert
-	if err := os.WriteFile(fullPath, []byte(page.Content), 0644); err != nil {
-		return fmt.Errorf("Failed to write page: %v", err)
-	} else {
-		log.Printf("wrote page %s at %s", page.Path, fullPath)
-	}
+func index(ctx *ctx, page *api.Page) error {
+	util.Assert(ctx != nil, "index nil ctx")
+	util.Assert(page != nil, "index nil page")
 
 	vector, err := ctx.openai.Embed(page.Content)
 	if err != nil {
@@ -58,6 +62,22 @@ func writePage(ctx *ctx, page *api.Page) error {
 	}
 
 	return sqlite.Insert(ctx.db, page.Path, page.Stamp, vector)
+}
+
+func writePage(ctx *ctx, page *api.Page) error {
+	util.Assert(ctx != nil, "writePage nil ctx")
+	util.Assert(page != nil, "writePage nil page")
+
+	fullPath := filepath.Join(ctx.config.WikiPath, page.Path+".md")
+
+	// FIXME transactional write+insert
+	if err := os.WriteFile(fullPath, []byte(page.Content), 0644); err != nil {
+		return fmt.Errorf("Failed to write page: %v", err)
+	} else {
+		log.Printf("wrote page %s at %s", page.Path, fullPath)
+	}
+
+	return index(ctx, page)
 }
 
 func searchPages(ctx *ctx, query string) ([]sqlite.SearchResult, error) {
@@ -261,15 +281,76 @@ func initSqlite(config *config) *sql.DB {
 	return sqlite.Init(dbPath)
 }
 
-func Main() {
-	config := loadConfig()
+func PathsPhysicallyEqual(p1, p2 string) bool {
+	info1, err1 := os.Stat(p1)
+	info2, err2 := os.Stat(p2)
 
-	db := initSqlite(config)
-	defer db.Close()
-	ctx := newCtx(config, db)
+	if err1 != nil || err2 != nil {
+		log.Printf("Error statting paths: %v, %v", err1, err2)
+		return false
+	}
+
+	return os.SameFile(info1, info2)
+}
+
+func validateAndIndex(ctx *ctx, path string) error {
+	util.Assert(ctx != nil, "validateAndIndex nil ctx")
+
+	pagePath := strings.TrimSuffix(filepath.Base(path), ".md")
+
+	if err := util.ValidatePagePath(pagePath); err != nil {
+		return fmt.Errorf("invalid page path: %w", err)
+	}
+
+	wikiPath0, err := wikiPath(ctx.config)
+	if err != nil {
+		return fmt.Errorf("failed to get wiki path: %w", err)
+	}
+
+	path2 := filepath.Join(wikiPath0, pagePath+".md")
+	if !PathsPhysicallyEqual(path, path2) {
+		return fmt.Errorf("path %s is outside managed directory", path)
+	}
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("failed to read page %s: %w", path, err)
+	}
+
+	page := api.Page{
+		Path:    pagePath,
+		Content: string(content),
+	}
+
+	err = index(ctx, &page)
+	if err != nil {
+		return fmt.Errorf("failed to index page %s: %w", pagePath, err)
+	}
+
+	return nil
+}
+
+// This is in the server module because it needs almost the same context. No
+// need to keep it in the server process though. If another process
+// simultaneously indexes the same files the worst thing that can happen is
+// non-deterministic SQLite3 INSERT.
+func Index(paths []string) {
+	ctx := newCtx()
+	defer ctx.Close()
+
+	for _, path := range paths {
+		if err := validateAndIndex(ctx, path); err != nil {
+			log.Printf("failed to index page %s: %v", path, err)
+		}
+	}
+}
+
+func Main() {
+	ctx := newCtx()
+	defer ctx.Close()
 
 	installHandlers(ctx)
 
-	log.Printf("Server starting on port %d...", config.Port)
-	http.ListenAndServe(fmt.Sprintf(":%d", config.Port), nil)
+	log.Printf("Server starting on port %d...", ctx.config.Port)
+	http.ListenAndServe(fmt.Sprintf(":%d", ctx.config.Port), nil)
 }
