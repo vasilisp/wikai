@@ -16,6 +16,27 @@
       const [input, setInput] = React.useState('');
       const messagesEndRef = React.useRef(null);
 
+      const renderMessage = (message) => {
+        if (typeof message === 'string') {
+          return message;
+        }
+        return (
+          <>
+            {message.text}
+            {message.links && message.links.length > 0 && (
+              <div className="message-links">
+                References: {message.links.map((link, i) => (
+                  <React.Fragment key={i}>
+                    {i > 0 && ', '}
+                    <a href={link.url}>{link.text}</a>
+                  </React.Fragment>
+                ))}
+              </div>
+            )}
+          </>
+        );
+      };
+
       const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
       };
@@ -41,7 +62,20 @@
             throw new Error(`HTTP status ${response.status}`);
           }
           const data = await response.json();
-          setMessages(prev => [...prev, { text: data.response, isUser: false }]);
+          let messageText = data.message;
+          let links = null;
+          if (data.references && data.references.length > 0) {
+            const prefix = data.reference_prefix || '';
+            links = data.references.map(ref => ({
+              url: prefix + "/" + ref,
+              text: ref
+            }));
+          }
+          setMessages(prev => [...prev, {
+            text: messageText,
+            isUser: false,
+            links: links
+          }]);
         } catch (error) {
           setMessages(prev => [...prev, { text: `Error: ${error.message}`, isUser: false }]);
         }
@@ -53,7 +87,7 @@
             {messages.map((message, index) => (
               <div key={index} className={`message-wrapper ${message.isUser ? 'user' : 'assistant'}`}>
                 <div className={`message-bubble ${message.isUser ? 'user' : 'assistant'}`}>
-                  {message.text}
+                  {renderMessage(message)}
                 </div>
               </div>
             ))}

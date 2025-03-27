@@ -54,7 +54,7 @@ func askGPT(args []string, port int) {
 		log.Fatal("Failed to decode response:", err)
 	}
 
-	fmt.Println(result.Response)
+	fmt.Println(result)
 }
 
 func Main(args []string) {

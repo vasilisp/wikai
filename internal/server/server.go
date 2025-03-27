@@ -146,7 +146,9 @@ func aiHandler(ctx *ctx, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := ""
+	w.Header().Set("Content-Type", "application/json")
+
+	response := api.PostResponse{}
 
 	// Prepare JSON response
 	switch aiResponse.Kind {
@@ -162,7 +164,9 @@ func aiHandler(ctx *ctx, w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Failed to write page", http.StatusInternalServerError)
 			return
 		}
-		resp = fmt.Sprintf("saved page %s", page.Path)
+		response.Message = "I saved a new note for you."
+		response.ReferencePrefix = ctx.config.WikiPrefix
+		response.References = []string{page.Path}
 	case openai.KindSearch:
 		log.Printf("search query: %s", aiResponse.Content)
 		pages, err := searchPages(ctx, aiResponse.Content)
@@ -171,14 +175,14 @@ func aiHandler(ctx *ctx, w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Failed to search pages", http.StatusInternalServerError)
 			return
 		}
-		resp = fmt.Sprintf("search results: %v", pages)
+		response.Message = "I found some notes for you."
+		response.ReferencePrefix = ctx.config.WikiPrefix
+		response.References = util.MapSlice(pages, func(page sqlite.SearchResult) string {
+			return page.Path
+		})
 	case openai.KindUnknown:
-		resp = aiResponse.Content
+		response.Message = aiResponse.Content
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-
-	response := api.PostResponse{Response: resp}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		http.Error(w, "Failed to encode response", http.StatusInternalServerError)

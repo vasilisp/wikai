@@ -10,5 +10,7 @@ type Page struct {
 }
 
 type PostResponse struct {
-	Response string `json:"response"`
+	Message         string   `json:"message"`
+	ReferencePrefix string   `json:"reference_prefix,omitempty"`
+	References      []string `json:"references,omitempty"`
 }
