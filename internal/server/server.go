@@ -60,7 +60,7 @@ func writePage(ctx *ctx, page *api.Page) error {
 	return sqlite.Insert(ctx.db, page.Path, page.Stamp, vector)
 }
 
-func searchPages(ctx *ctx, query string) ([]string, error) {
+func searchPages(ctx *ctx, query string) ([]sqlite.SearchResult, error) {
 	util.Assert(ctx != nil, "searchPages nil ctx")
 
 	vector, err := ctx.openai.Embed(query)

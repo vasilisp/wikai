@@ -11,6 +11,11 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
+type SearchResult struct {
+	Path     string
+	Distance float64
+}
+
 func sqliteVecVersion(db *sql.DB) (string, error) {
 	var vecVersion string
 	err := db.QueryRow("select vec_version()").Scan(&vecVersion)
@@ -20,16 +25,16 @@ func sqliteVecVersion(db *sql.DB) (string, error) {
 	return vecVersion, nil
 }
 
-func SimilarPages(db *sql.DB, vector []float32) ([]string, error) {
+func SimilarPages(db *sql.DB, vector []float32) ([]SearchResult, error) {
 	blob, err := sqlite_vec.SerializeFloat32(vector)
 	if err != nil {
 		return nil, fmt.Errorf("failed to serialize vector: %v", err)
 	}
 
 	rows, err := db.Query(`
-		SELECT embeddings.path
+		SELECT embeddings.path, vec_distance_cosine(embedding, ?) as distance
 		FROM embeddings
-		ORDER BY vec_distance_cosine(embedding, ?) ASC
+		ORDER BY distance ASC
 		LIMIT 5
 	`, blob)
 	if err != nil {
@@ -37,15 +42,22 @@ func SimilarPages(db *sql.DB, vector []float32) ([]string, error) {
 	}
 	defer rows.Close()
 
-	var paths []string
+	var results []SearchResult = make([]SearchResult, 0, 5)
+
 	for rows.Next() {
 		var path string
-		if err := rows.Scan(&path); err != nil {
+		var distance float64
+
+		if err := rows.Scan(&path, &distance); err != nil {
 			return nil, fmt.Errorf("similarPages scan error: %v", err)
 		}
-		paths = append(paths, path)
+
+		if len(results) == 0 || distance < 2*results[0].Distance {
+			results = append(results, SearchResult{Path: path, Distance: distance})
+		}
 	}
-	return paths, nil
+
+	return results, nil
 }
 
 func Insert(db *sql.DB, path string, stamp int64, vector []float32) error {
