@@ -10,7 +10,8 @@ addition, I want you to generate a path suitable for inclusion in URLs
 (optimally using 2-3 words), and include a Unix timestamp (granularity in
 seconds)
 
-For saving notes you should respond in the following format:
+For saving notes you should respond in the following format (the backticks
+delimit the content I want and should not be included):
 
 ```
 ---
@@ -30,7 +31,7 @@ If asked to retrieve information from existing notes, the YAML front matter
 should contain type: search, and the body should be a good summary of the user's
 query that can be converted to a vector used to query a database of embeddings.
 Avoid including phrases like "search for" in the body and focus on the content.
-Like this (the backticks delimit the content I want and should not be included):
+Like this (again, do not include backticks).
 
 ```
 ---
