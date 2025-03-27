@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"text/template"
 
 	"github.com/microcosm-cc/bluemonday"
 	"github.com/vasilisp/wikai/internal/api"
@@ -104,7 +105,13 @@ func wikiHandler(ctx *ctx, w http.ResponseWriter, r *http.Request) {
 
 	// Write response
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write(html)
+
+	// Render template with content
+	tmpl := template.Must(template.New("wiki").Parse(string(data.WikiTemplate)))
+	if err := tmpl.Execute(w, struct{ Content string }{string(html)}); err != nil {
+		http.Error(w, "Failed to render template", http.StatusInternalServerError)
+		return
+	}
 }
 
 func aiHandler(ctx *ctx, w http.ResponseWriter, r *http.Request) {

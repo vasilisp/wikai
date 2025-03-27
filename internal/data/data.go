@@ -12,3 +12,6 @@ var IndexHTML []byte
 
 //go:embed style.css
 var StyleCSS []byte
+
+//go:embed wikitemplate.html
+var WikiTemplate []byte
