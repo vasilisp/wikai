@@ -33,9 +33,18 @@ func loadConfig() *config {
 		log.Fatal("Failed to parse config file:", err)
 	}
 
-	// Set default wiki prefix if not specified
 	if config.WikiPrefix == "" {
 		config.WikiPrefix = "/wikai"
+	} else {
+		if len(config.WikiPrefix) < 2 || config.WikiPrefix[0] != '/' {
+			log.Fatal("WikiPrefix must start with /")
+		}
+		for i := 1; i < len(config.WikiPrefix); i++ {
+			c := config.WikiPrefix[i]
+			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) {
+				log.Fatal("WikiPrefix must contain only alphanumeric characters after the /")
+			}
+		}
 	}
 
 	if config.Port <= 0 {

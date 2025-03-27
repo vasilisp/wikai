@@ -209,7 +209,7 @@ func installHandlers(ctx *ctx) {
 	})
 
 	http.HandleFunc(api.PostPath, handlerWith(ctx, aiHandler))
-	http.HandleFunc("/wiki/", handlerWith(ctx, wikiHandler))
+	http.HandleFunc(ctx.config.WikiPrefix+"/", handlerWith(ctx, wikiHandler))
 
 	// Serve style.css
 	http.HandleFunc("/style.css", func(w http.ResponseWriter, r *http.Request) {
