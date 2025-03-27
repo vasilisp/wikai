@@ -188,6 +188,10 @@ func PageOfResponse(response *Response) (*api.Page, error) {
 		return nil, fmt.Errorf("missing path field")
 	}
 
+	if err := util.ValidatePagePath(path); err != nil {
+		return nil, fmt.Errorf("invalid path: %v", err)
+	}
+
 	return &api.Page{
 		Title:   title,
 		Content: response.Content,
