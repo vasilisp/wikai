@@ -37,6 +37,9 @@
             method: 'POST',
             body: userMessage
           });
+          if (!response.ok) {
+            throw new Error(`HTTP status ${response.status}`);
+          }
           const data = await response.json();
           setMessages(prev => [...prev, { text: data.response, isUser: false }]);
         } catch (error) {
