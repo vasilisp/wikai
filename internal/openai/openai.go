@@ -119,7 +119,7 @@ func responseKind(kv map[string]string) ResponseKind {
 	}
 
 	switch kind {
-	case "page":
+	case "newpage":
 		return KindPage
 	case "search":
 		return KindSearch
