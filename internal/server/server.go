@@ -39,10 +39,6 @@ func newCtx(config *config, db *sql.DB) *ctx {
 	}
 }
 
-func handler(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(w, "Hello, World!")
-}
-
 func writePage(ctx *ctx, page *api.Page) error {
 	fullPath := filepath.Join(ctx.config.WikiPath, page.Path+".md")
 
@@ -210,7 +206,9 @@ func installHandlers(ctx *ctx) {
 			w.Write(data.IndexHTML)
 			return
 		}
-		handler(w, r) // Your existing default handler
+		log.Printf("not found: %s", r.URL.Path)
+		http.NotFound(w, r)
+		return
 	})
 
 	http.HandleFunc("/chat", handlerWith(ctx, chatHandler))
