@@ -75,6 +75,16 @@ func (c *Client) Embed(str string) ([]float32, error) {
 	return vectorFloat32, nil
 }
 
+func extractGPTResponse(chatCompletion *openai.ChatCompletion) (string, error) {
+	if chatCompletion == nil {
+		return "", fmt.Errorf("nil chatCompletion")
+	}
+	if len(chatCompletion.Choices) == 0 {
+		return "", fmt.Errorf("no choices returned")
+	}
+	return chatCompletion.Choices[0].Message.Content, nil
+}
+
 func (c *Client) AskGPT(systemMessage string, userMessage string) (string, error) {
 	util.Assert(c != nil, "AskGPT nil client")
 	util.Assert(systemMessage != "", "AskGPT empty systemMessage")
@@ -91,7 +101,7 @@ func (c *Client) AskGPT(systemMessage string, userMessage string) (string, error
 		return "", fmt.Errorf("ChatCompletion error: %v", err)
 	}
 
-	return chatCompletion.Choices[0].Message.Content, nil
+	return extractGPTResponse(chatCompletion)
 }
 
 func (c *Client) DefaultAskGPT(userMessage string) (string, error) {
@@ -184,4 +194,28 @@ func PageOfResponse(response *Response) (*api.Page, error) {
 		Path:    path,
 		Stamp:   stamp,
 	}, nil
+}
+
+func (c *Client) Summarize(documents []string) (string, error) {
+	util.Assert(c != nil, "Summarize nil client")
+	util.Assert(len(documents) > 0, "Summarize empty documents")
+
+	messages := make([]openai.ChatCompletionMessageParamUnion, 0, len(documents)+1)
+
+	systemMessage := data.SystemPromptSummarize
+	messages = append(messages, openai.SystemMessage(systemMessage))
+
+	for i, document := range documents {
+		messages = append(messages, openai.UserMessage(fmt.Sprintf("Document %d:\n\n%s", i+1, document)))
+	}
+
+	chatCompletion, err := c.client.Chat.Completions.New(context.TODO(), openai.ChatCompletionNewParams{
+		Messages: openai.F(messages),
+		Model:    openai.F(openai.ChatModelGPT4o),
+	})
+	if err != nil {
+		return "", fmt.Errorf("ChatCompletion error: %v", err)
+	}
+
+	return extractGPTResponse(chatCompletion)
 }
