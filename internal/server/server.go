@@ -134,7 +134,7 @@ func wikiHandler(ctx *ctx, w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func summarizeSearchResults(ctx *ctx, results []sqlite.SearchResult) (string, error) {
+func summarizeSearchResults(ctx *ctx, userQuery string, results []sqlite.SearchResult) (string, openai.Irrelevant, error) {
 	util.Assert(ctx != nil, "summarizeSearchResults nil ctx")
 	util.Assert(len(results) > 0, "summarizeSearchResults empty results")
 
@@ -142,12 +142,12 @@ func summarizeSearchResults(ctx *ctx, results []sqlite.SearchResult) (string, er
 	for _, result := range results {
 		content, err := os.ReadFile(filepath.Join(ctx.config.WikiPath, result.Path+".md"))
 		if err != nil {
-			return "", fmt.Errorf("failed to read page: %v", err)
+			return "", nil, fmt.Errorf("failed to read page: %v", err)
 		}
 		documents = append(documents, string(content))
 	}
 
-	return ctx.openai.Summarize(documents)
+	return ctx.openai.Summarize(userQuery, documents)
 }
 
 func aiHandler(ctx *ctx, w http.ResponseWriter, r *http.Request) {
@@ -164,13 +164,13 @@ func aiHandler(ctx *ctx, w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	query := string(body)
-	if query == "" {
+	userQuery := string(body)
+	if userQuery == "" {
 		http.Error(w, "Empty query", http.StatusBadRequest)
 		return
 	}
 
-	gptResp, err := ctx.openai.DefaultAskGPT(query)
+	gptResp, err := ctx.openai.DefaultAskGPT(userQuery)
 	if err != nil {
 		http.Error(w, "Failed to process query", http.StatusInternalServerError)
 		return
@@ -214,7 +214,7 @@ func aiHandler(ctx *ctx, w http.ResponseWriter, r *http.Request) {
 		if len(pages) == 0 {
 			response.Message = "I found no notes for you."
 		} else {
-			summary, err := summarizeSearchResults(ctx, pages)
+			summary, irrelevant, err := summarizeSearchResults(ctx, userQuery, pages)
 			if err != nil {
 				log.Printf("Failed to summarize search results: %v", err)
 				response.Message = "I found some notes for you."
@@ -222,9 +222,12 @@ func aiHandler(ctx *ctx, w http.ResponseWriter, r *http.Request) {
 				response.Message = summary
 			}
 			response.ReferencePrefix = ctx.config.WikiPrefix
-			response.References = util.MapSlice(pages, func(page sqlite.SearchResult) string {
-				return page.Path
-			})
+			response.References = make([]string, 0, len(pages))
+			for i, page := range pages {
+				if _, ok := irrelevant[i]; !ok {
+					response.References = append(response.References, page.Path)
+				}
+			}
 		}
 	case openai.KindUnknown:
 		response.Message = aiResponse.Content

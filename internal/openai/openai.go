@@ -3,6 +3,7 @@ package openai
 import (
 	"context"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 
@@ -138,13 +139,12 @@ func responseKind(kv map[string]string) ResponseKind {
 	}
 }
 
-func ParseResponse(response string) (*Response, error) {
-	// Split response into front matter and content
+func splitFrontMatter(response string) (string, map[string]string) {
 	parts := strings.Split(response, "---")
 	if len(parts) < 3 {
-		return &Response{Kind: KindUnknown, KV: nil, Content: response}, nil
+		return response, nil
 	}
-	// Parse YAML front matter
+
 	frontMatter := parts[1]
 	lines := strings.Split(strings.TrimSpace(frontMatter), "\n")
 
@@ -159,9 +159,14 @@ func ParseResponse(response string) (*Response, error) {
 		kv[key] = value
 	}
 
+	return strings.TrimLeft(parts[2], " \t\n\r"), kv
+}
+
+func ParseResponse(response string) (*Response, error) {
+	content, kv := splitFrontMatter(response)
+
 	kind := responseKind(kv)
 	delete(kv, "type")
-	content := strings.TrimLeft(parts[2], " \t\n\r")
 
 	return &Response{Kind: kind, KV: kv, Content: content}, nil
 }
@@ -200,7 +205,10 @@ func PageOfResponse(response *Response) (*api.Page, error) {
 	}, nil
 }
 
-func (c *Client) Summarize(documents []string) (string, error) {
+// read-only: can be nil
+type Irrelevant map[int]struct{}
+
+func (c *Client) Summarize(userQuery string, documents []string) (string, Irrelevant, error) {
 	util.Assert(c != nil, "Summarize nil client")
 	util.Assert(len(documents) > 0, "Summarize empty documents")
 
@@ -208,6 +216,10 @@ func (c *Client) Summarize(documents []string) (string, error) {
 
 	systemMessage := data.SystemPromptSummarize
 	messages = append(messages, openai.SystemMessage(systemMessage))
+
+	if userQuery != "" {
+		messages = append(messages, openai.UserMessage(fmt.Sprintf("User query:\n\n%s", userQuery)))
+	}
 
 	for i, document := range documents {
 		messages = append(messages, openai.UserMessage(fmt.Sprintf("Document %d:\n\n%s", i+1, document)))
@@ -218,8 +230,28 @@ func (c *Client) Summarize(documents []string) (string, error) {
 		Model:    openai.F(openai.ChatModelGPT4o),
 	})
 	if err != nil {
-		return "", fmt.Errorf("ChatCompletion error: %v", err)
+		return "", nil, fmt.Errorf("ChatCompletion error: %v", err)
 	}
 
-	return extractGPTResponse(chatCompletion)
+	gptResponse, err := extractGPTResponse(chatCompletion)
+	if err != nil {
+		return "", nil, fmt.Errorf("extractGPTResponse error: %v", err)
+	}
+
+	summary, kv := splitFrontMatter(gptResponse)
+
+	if kv["irrelevant"] != "" {
+		irrelevant := make(map[int]struct{})
+		for _, index := range strings.Split(kv["irrelevant"], ",") {
+			idx, err := strconv.Atoi(strings.TrimSpace(index))
+			if err != nil {
+				log.Printf("invalid irrelevant: %v", err)
+			} else {
+				// documents are 1-indexed
+				irrelevant[idx-1] = struct{}{}
+			}
+		}
+		return summary, Irrelevant(irrelevant), nil
+	}
+	return summary, nil, nil
 }

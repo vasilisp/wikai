@@ -20,15 +20,33 @@
         if (typeof message === 'string') {
           return message;
         }
+
+        // Convert message text containing [n] into elements with links
+        const parts = message.text.split(/(\[\d+\])/);
+        const elements = parts.map((part, index) => {
+          const match = part.match(/\[(\d+)\]/);
+          if (match) {
+            const num = parseInt(match[1]) - 1;
+            if (message.links && num >= 0 && num < message.links.length) {
+              return (
+                <a key={index} href={message.links[num].url}>
+                  {part}
+                </a>
+              );
+            }
+          }
+          return part;
+        });
+
         return (
           <>
-            {message.text}
+            {elements}
             {message.links && message.links.length > 0 && (
               <div className="message-links">
-                References: {message.links.map((link, i) => (
+                {message.links.map((link, i) => (
                   <React.Fragment key={i}>
                     {i > 0 && ', '}
-                    <a href={link.url}>{link.text}</a>
+                    <a href={link.url}>[{i+1}] {link.text}</a>
                   </React.Fragment>
                 ))}
               </div>
