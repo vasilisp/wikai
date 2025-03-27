@@ -3,26 +3,77 @@
 <head>
   <meta charset="utf-8">
   <title>WikAI</title>
+  <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <input type="text" id="query" placeholder="Enter your query">
-  <button id="askButton">Ask GPT</button>
-  <div id="result"></div>
-  <script>
-    document.getElementById('askButton').addEventListener('click', async () => {
-      const query = document.getElementById('query').value;
-      const resultDiv = document.getElementById('result');
-      try {
-        const response = await fetch('/ai', {
-          method: 'POST',
-          body: query
-        });
-        const data = await response.json();
-        resultDiv.textContent = data.response;
-      } catch (error) {
-        resultDiv.textContent = 'Error: ' + error.message;
-      }
-    });
+  <div id="root"></div>
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.22.5/babel.min.js"></script>
+  <script type="text/babel">
+    function ChatApp() {
+      const [messages, setMessages] = React.useState([]);
+      const [input, setInput] = React.useState('');
+      const messagesEndRef = React.useRef(null);
+
+      const scrollToBottom = () => {
+        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      };
+
+      React.useEffect(() => {
+        scrollToBottom();
+      }, [messages]);
+
+      const handleSubmit = async (e) => {
+        e.preventDefault();
+        if (!input.trim()) return;
+
+        const userMessage = input;
+        setInput('');
+        setMessages(prev => [...prev, { text: userMessage, isUser: true }]);
+
+        try {
+          const response = await fetch('/ai', {
+            method: 'POST',
+            body: userMessage
+          });
+          const data = await response.json();
+          setMessages(prev => [...prev, { text: data.response, isUser: false }]);
+        } catch (error) {
+          setMessages(prev => [...prev, { text: `Error: ${error.message}`, isUser: false }]);
+        }
+      };
+
+      return (
+        <div className="chat-container">
+          <div className="messages-window">
+            {messages.map((message, index) => (
+              <div key={index} className={`message-wrapper ${message.isUser ? 'user' : 'assistant'}`}>
+                <div className={`message-bubble ${message.isUser ? 'user' : 'assistant'}`}>
+                  {message.text}
+                </div>
+              </div>
+            ))}
+            <div ref={messagesEndRef} />
+          </div>
+          <form onSubmit={handleSubmit} className="chat-form">
+            <input
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Type your message..."
+              className="chat-input"
+            />
+            <button type="submit" className="send-button">
+              Send
+            </button>
+          </form>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<ChatApp />);
   </script>
 </body>
 </html>

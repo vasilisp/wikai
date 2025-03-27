@@ -216,6 +216,13 @@ func installHandlers(ctx *ctx) {
 	http.HandleFunc("/chat", handlerWith(ctx, chatHandler))
 	http.HandleFunc(api.PostPath, handlerWith(ctx, aiHandler))
 	http.HandleFunc("/wiki/", handlerWith(ctx, wikiHandler))
+
+	// Serve style.css
+	http.HandleFunc("/style.css", func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("serving style.css")
+		w.Header().Set("Content-Type", "text/css")
+		w.Write(data.StyleCSS)
+	})
 }
 
 func initSqlite(config *config) *sql.DB {

@@ -9,3 +9,6 @@ var SystemPrompt string
 
 //go:embed index.html
 var IndexHTML []byte
+
+//go:embed style.css
+var StyleCSS []byte
