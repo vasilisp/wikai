@@ -66,11 +66,13 @@ func Insert(db *sql.DB, path string, stamp int64, vector []float32) error {
 		return fmt.Errorf("failed to serialize vector: %v", err)
 	}
 
-	// Insert into SQLite DB
+	// Insert into SQLite DB; allow updates for updated content
 	if _, err := db.Exec(`
 			INSERT INTO embeddings(path, created_at, embedding)
 			VALUES (?, ?, ?)
-			ON CONFLICT(path) DO NOTHING
+			ON CONFLICT(path)
+				DO UPDATE
+				SET embedding = excluded.embedding, created_at = excluded.created_at
 		    `, path, stamp, blob); err != nil {
 		return fmt.Errorf("Failed to update database: %v", err)
 	} else {
