@@ -186,16 +186,6 @@ func aiHandler(ctx *ctx, w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func chatHandler(ctx *ctx, w http.ResponseWriter, r *http.Request) {
-	_ = r
-	resp, err := ctx.openai.DefaultAskGPT("What do I have to do today?")
-	if err != nil {
-		http.Error(w, "Failed to ask GPT", http.StatusInternalServerError)
-		return
-	}
-	fmt.Fprintf(w, "%s", resp)
-}
-
 func handlerWith[T interface{}](t T, fn func(T, http.ResponseWriter, *http.Request)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		fn(t, w, r)
@@ -218,7 +208,6 @@ func installHandlers(ctx *ctx) {
 		return
 	})
 
-	http.HandleFunc("/chat", handlerWith(ctx, chatHandler))
 	http.HandleFunc(api.PostPath, handlerWith(ctx, aiHandler))
 	http.HandleFunc("/wiki/", handlerWith(ctx, wikiHandler))
 
