@@ -132,9 +132,8 @@ func ParseResponse(response string) (*Response, error) {
 	// Split response into front matter and content
 	parts := strings.Split(response, "---")
 	if len(parts) < 3 {
-		return nil, fmt.Errorf("invalid response format: missing front matter")
+		return &Response{Kind: KindUnknown, KV: nil, Content: response}, nil
 	}
-
 	// Parse YAML front matter
 	frontMatter := parts[1]
 	lines := strings.Split(strings.TrimSpace(frontMatter), "\n")
