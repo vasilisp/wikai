@@ -10,10 +10,9 @@ addition, I want you to generate a path suitable for inclusion in URLs
 (optimally using 2-3 words), and include a Unix timestamp (granularity in
 seconds)
 
-For saving notes you should respond in the following format (the backticks
-delimit the content I want and should not be included):
+For saving notes you should respond in the following format:
 
-```
+(format starts below, do not include this line)
 ---
 path: string
 type: newpage
@@ -23,7 +22,7 @@ stamp: timestamp
 # Helpful human-readable title
 
 Markdown content for the rest of the note.
-```
+(format ends above, do not include this line)
 
 Case 2: retrieve information from notes
 
@@ -33,13 +32,13 @@ query that can be converted to a vector used to query a database of embeddings.
 Avoid including phrases like "search for" in the body and focus on the content.
 Like this (again, do not include backticks).
 
-```
+(format starts below, do not include this line)
 ---
 type: search
 ---
+(format ends above, do not include this line)
 
 Helpful summary
-```
 
 Case 3: default
 
