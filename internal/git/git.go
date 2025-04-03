@@ -84,3 +84,15 @@ func NewRepo(path string, gitIgnore string) (Repo, error) {
 	log.Printf("will manage existing repo %s", path)
 	return Repo{path: path}, nil
 }
+
+func (r Repo) AddVector(vectorBase64 string) error {
+	// Add the vector as a note to the latest commit
+	noteCmd := exec.Command("git", "notes", "append", "-m", vectorBase64, "HEAD")
+	noteCmd.Dir = r.path
+
+	if err := noteCmd.Run(); err != nil {
+		return fmt.Errorf("failed to add vector note: %v", err)
+	}
+
+	return nil
+}

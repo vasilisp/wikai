@@ -75,7 +75,13 @@ func index(ctx *ctx, page *api.Page) error {
 		log.Printf("vectorized page %s", page.Path)
 	}
 
+	vectorBlob, err := sqlite.SerializeVector(vector)
+	if err != nil {
+		return fmt.Errorf("Failed to serialize vector: %v", err)
+	}
+
 	if ctx.git != nil {
+		vectorBlobBase64 := vectorBlob.Base64()
 		err := ctx.git.Add(page.Path + ".md")
 		if err != nil {
 			return fmt.Errorf("Failed to add page to git: %v", err)
@@ -85,9 +91,14 @@ func index(ctx *ctx, page *api.Page) error {
 		if err != nil {
 			return fmt.Errorf("Failed to commit page to git: %v", err)
 		}
+
+		err = ctx.git.AddVector(vectorBlobBase64)
+		if err != nil {
+			return fmt.Errorf("Failed to add vector to git: %v", err)
+		}
 	}
 
-	return sqlite.Insert(ctx.db, page.Path, page.Stamp, vector)
+	return sqlite.Insert(ctx.db, page.Path, page.Stamp, vectorBlob)
 }
 
 func writePage(ctx *ctx, page *api.Page) error {

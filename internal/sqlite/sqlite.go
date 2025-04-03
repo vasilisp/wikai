@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"database/sql"
+	"encoding/base64"
 	"fmt"
 	"log"
 	"os"
@@ -60,12 +61,23 @@ func SimilarPages(db *sql.DB, vector []float32) ([]SearchResult, error) {
 	return results, nil
 }
 
-func Insert(db *sql.DB, path string, stamp int64, vector []float32) error {
+type VectorBlob struct {
+	blob []byte
+}
+
+func (v VectorBlob) Base64() string {
+	return base64.StdEncoding.EncodeToString(v.blob)
+}
+
+func SerializeVector(vector []float32) (VectorBlob, error) {
 	blob, err := sqlite_vec.SerializeFloat32(vector)
 	if err != nil {
-		return fmt.Errorf("failed to serialize vector: %v", err)
+		return VectorBlob{}, fmt.Errorf("failed to serialize vector: %v", err)
 	}
+	return VectorBlob{blob: blob}, nil
+}
 
+func Insert(db *sql.DB, path string, stamp int64, vectorBlob VectorBlob) error {
 	// Insert into SQLite DB; allow updates for updated content
 	if _, err := db.Exec(`
 			INSERT INTO embeddings(path, created_at, embedding)
@@ -73,7 +85,7 @@ func Insert(db *sql.DB, path string, stamp int64, vector []float32) error {
 			ON CONFLICT(path)
 				DO UPDATE
 				SET embedding = excluded.embedding, created_at = excluded.created_at
-		    `, path, stamp, blob); err != nil {
+		    `, path, stamp, vectorBlob.blob); err != nil {
 		return fmt.Errorf("Failed to update database: %v", err)
 	} else {
 		log.Printf("updated database for page %s", path)
