@@ -16,6 +16,7 @@ import (
 	"github.com/microcosm-cc/bluemonday"
 	"github.com/vasilisp/wikai/internal/api"
 	"github.com/vasilisp/wikai/internal/data"
+	"github.com/vasilisp/wikai/internal/git"
 	"github.com/vasilisp/wikai/internal/openai"
 	"github.com/vasilisp/wikai/internal/sqlite"
 	"github.com/vasilisp/wikai/internal/util"
@@ -26,6 +27,7 @@ type ctx struct {
 	config *config
 	db     *sql.DB
 	openai *openai.Client
+	git    *git.Repo
 }
 
 func newCtx() *ctx {
@@ -37,10 +39,22 @@ func newCtx() *ctx {
 
 	openai := openai.NewClient(config.OpenAIToken, config.EmbeddingDimensions)
 
+	var gitp *git.Repo
+	if config.EnableGit {
+		var err error
+		gitv, err := git.NewRepo(config.WikiPath, "sqlite\n")
+		gitp = &gitv
+		util.Assert(err == nil, "newCtx failed to create git repo")
+	} else {
+		log.Printf("git disabled")
+		gitp = nil
+	}
+
 	return &ctx{
 		config: config,
 		db:     db,
 		openai: openai,
+		git:    gitp,
 	}
 }
 
@@ -59,6 +73,18 @@ func index(ctx *ctx, page *api.Page) error {
 		return fmt.Errorf("Failed to vectorize page: %v", err)
 	} else {
 		log.Printf("vectorized page %s", page.Path)
+	}
+
+	if ctx.git != nil {
+		err := ctx.git.Add(page.Path + ".md")
+		if err != nil {
+			return fmt.Errorf("Failed to add page to git: %v", err)
+		}
+
+		err = ctx.git.Commit(fmt.Sprintf("Add %s", page.Path))
+		if err != nil {
+			return fmt.Errorf("Failed to commit page to git: %v", err)
+		}
 	}
 
 	return sqlite.Insert(ctx.db, page.Path, page.Stamp, vector)

@@ -14,6 +14,7 @@ type config struct {
 	OpenAIToken         string `json:"openaiToken"`
 	EmbeddingDimensions int    `json:"embeddingDimensions,omitempty"`
 	Port                int    `json:"port,omitempty"`
+	EnableGit           bool   `json:"enableGit,omitempty"`
 }
 
 func loadConfig() *config {
