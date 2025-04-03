@@ -15,7 +15,7 @@ import (
 )
 
 type Client struct {
-	client              *openai.Client
+	client              openai.Client
 	embeddingDimensions int
 }
 
@@ -24,7 +24,6 @@ func NewClient(token string, embeddingDimensions int) *Client {
 	util.Assert(embeddingDimensions > 0, "NewClient non-positive embeddingDimensions")
 
 	client := openai.NewClient(option.WithAPIKey(token))
-	util.Assert(client != nil, "NewClient nil client")
 
 	return &Client{
 		client:              client,
@@ -53,11 +52,10 @@ func (c *Client) Embed(str string) ([]float32, error) {
 
 	strings := *splitTextIntoChunks(str, 512)
 
-	inputUnion := openai.EmbeddingNewParamsInputUnion(openai.EmbeddingNewParamsInputArrayOfStrings(strings))
 	embedding, err := c.client.Embeddings.New(context.TODO(), openai.EmbeddingNewParams{
-		Input:      openai.F(inputUnion),
-		Model:      openai.F(openai.EmbeddingModelTextEmbedding3Small),
-		Dimensions: openai.F(int64(c.embeddingDimensions)),
+		Input:      openai.EmbeddingNewParamsInputUnion{OfArrayOfStrings: strings},
+		Model:      openai.EmbeddingModelTextEmbedding3Small,
+		Dimensions: openai.Opt(int64(c.embeddingDimensions)),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create embedding: %v", err)
@@ -92,11 +90,11 @@ func (c *Client) AskGPT(systemMessage string, userMessage string) (string, error
 	util.Assert(userMessage != "", "AskGPT empty userMessage")
 
 	chatCompletion, err := c.client.Chat.Completions.New(context.TODO(), openai.ChatCompletionNewParams{
-		Messages: openai.F([]openai.ChatCompletionMessageParamUnion{
+		Messages: []openai.ChatCompletionMessageParamUnion{
 			openai.SystemMessage(systemMessage),
 			openai.UserMessage(userMessage),
-		}),
-		Model: openai.F(openai.ChatModelGPT4o),
+		},
+		Model: openai.ChatModelGPT4o,
 	})
 	if err != nil {
 		return "", fmt.Errorf("ChatCompletion error: %v", err)
@@ -226,8 +224,8 @@ func (c *Client) Summarize(userQuery string, documents []string) (string, Irrele
 	}
 
 	chatCompletion, err := c.client.Chat.Completions.New(context.TODO(), openai.ChatCompletionNewParams{
-		Messages: openai.F(messages),
-		Model:    openai.F(openai.ChatModelGPT4o),
+		Messages: messages,
+		Model:    openai.ChatModelGPT4o,
 	})
 	if err != nil {
 		return "", nil, fmt.Errorf("ChatCompletion error: %v", err)
