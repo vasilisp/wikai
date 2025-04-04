@@ -2,7 +2,6 @@ package server
 
 import (
 	"bytes"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,50 +17,46 @@ import (
 	"github.com/vasilisp/wikai/internal/data"
 	"github.com/vasilisp/wikai/internal/git"
 	"github.com/vasilisp/wikai/internal/openai"
-	"github.com/vasilisp/wikai/internal/sqlite"
 	"github.com/vasilisp/wikai/internal/util"
+	"github.com/vasilisp/wikai/pkg/embedding"
+	"github.com/vasilisp/wikai/pkg/search"
 	"github.com/yuin/goldmark"
 )
 
 type ctx struct {
 	config *config
-	db     *sql.DB
 	openai *openai.Client
-	git    *git.Repo
+	git    git.Repo
+	db     search.DB
+}
+
+func loadEmbeddings(ctx *ctx) error {
+	util.Assert(ctx != nil, "loadEmbeddings nil ctx")
+
+	return ctx.git.GetNoteContents(func(embJSON string) {
+		var emb embedding.Embedding
+		if err := json.Unmarshal([]byte(embJSON), &emb); err != nil {
+			log.Printf("failed to unmarshal embedding: %v", err)
+		}
+		ctx.db.Add(emb.ID, emb.Vector)
+	})
 }
 
 func newCtx() *ctx {
 	config := loadConfig()
 	util.Assert(config != nil, "newCtx nil config")
 
-	db := initSqlite(config)
-	util.Assert(db != nil, "newCtx nil DB")
-
 	openai := openai.NewClient(config.OpenAIToken, config.EmbeddingDimensions)
 
-	var gitp *git.Repo
-	if config.EnableGit {
-		var err error
-		gitv, err := git.NewRepo(config.WikiPath, "sqlite\n")
-		gitp = &gitv
-		util.Assert(err == nil, "newCtx failed to create git repo")
-	} else {
-		log.Printf("git disabled")
-		gitp = nil
-	}
+	git, err := git.NewRepo(config.WikiPath, "")
+	util.Assert(err == nil, "newCtx failed to create git repo")
 
 	return &ctx{
 		config: config,
-		db:     db,
 		openai: openai,
-		git:    gitp,
+		git:    git,
+		db:     search.NewDB(),
 	}
-}
-
-func (ctx *ctx) Close() {
-	util.Assert(ctx != nil, "Close nil ctx")
-	util.Assert(ctx.db != nil, "Close nil DB")
-	ctx.db.Close()
 }
 
 func index(ctx *ctx, page *api.Page) error {
@@ -75,30 +70,33 @@ func index(ctx *ctx, page *api.Page) error {
 		log.Printf("vectorized page %s", page.Path)
 	}
 
-	vectorBlob, err := sqlite.SerializeVector(vector)
+	err = ctx.git.Add(page.Path + ".md")
 	if err != nil {
-		return fmt.Errorf("Failed to serialize vector: %v", err)
+		return fmt.Errorf("Failed to add page to git: %v", err)
 	}
 
-	if ctx.git != nil {
-		vectorBlobBase64 := vectorBlob.Base64()
-		err := ctx.git.Add(page.Path + ".md")
-		if err != nil {
-			return fmt.Errorf("Failed to add page to git: %v", err)
-		}
-
-		err = ctx.git.Commit(fmt.Sprintf("Add %s", page.Path))
-		if err != nil {
-			return fmt.Errorf("Failed to commit page to git: %v", err)
-		}
-
-		err = ctx.git.AddVector(vectorBlobBase64)
-		if err != nil {
-			return fmt.Errorf("Failed to add vector to git: %v", err)
-		}
+	emb := embedding.Embedding{
+		ID:     page.Path,
+		Vector: vector,
+	}
+	embJSON, err := json.Marshal(emb)
+	if err != nil {
+		return fmt.Errorf("Failed to marshal embedding: %v", err)
 	}
 
-	return sqlite.Insert(ctx.db, page.Path, page.Stamp, vectorBlob)
+	err = ctx.git.Commit(fmt.Sprintf("Add %s", page.Path))
+	if err != nil {
+		return fmt.Errorf("Failed to commit page to git: %v", err)
+	}
+
+	err = ctx.git.AddNote(string(embJSON))
+	if err != nil {
+		return fmt.Errorf("Failed to add vector to git: %v", err)
+	}
+
+	ctx.db.Add(page.Path, vector)
+
+	return nil
 }
 
 func writePage(ctx *ctx, page *api.Page) error {
@@ -117,14 +115,15 @@ func writePage(ctx *ctx, page *api.Page) error {
 	return index(ctx, page)
 }
 
-func searchPages(ctx *ctx, query string) ([]sqlite.SearchResult, error) {
+func searchPages(ctx *ctx, query string) ([]search.Result, error) {
 	util.Assert(ctx != nil, "searchPages nil ctx")
 
 	vector, err := ctx.openai.Embed(query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to vectorize query: %v", err)
 	}
-	return sqlite.SimilarPages(ctx.db, vector)
+
+	return ctx.db.Search(vector, 5)
 }
 
 func wikiHandler(ctx *ctx, w http.ResponseWriter, r *http.Request) {
@@ -171,7 +170,7 @@ func wikiHandler(ctx *ctx, w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func summarizeSearchResults(ctx *ctx, userQuery string, results []sqlite.SearchResult) (string, openai.Irrelevant, error) {
+func summarizeSearchResults(ctx *ctx, userQuery string, results []search.Result) (string, openai.Irrelevant, error) {
 	util.Assert(ctx != nil, "summarizeSearchResults nil ctx")
 	util.Assert(len(results) > 0, "summarizeSearchResults empty results")
 
@@ -309,18 +308,6 @@ func installHandlers(ctx *ctx) {
 	})
 }
 
-func initSqlite(config *config) *sql.DB {
-	util.Assert(config != nil, "initSqlite nil config")
-
-	wikiPath, err := wikiPath(config)
-	if err != nil {
-		log.Fatal("Failed to get Wiki path:", err)
-	}
-
-	dbPath := filepath.Join(wikiPath, "sqlite")
-	return sqlite.Init(dbPath)
-}
-
 func PathsPhysicallyEqual(p1, p2 string) bool {
 	info1, err1 := os.Stat(p1)
 	info2, err2 := os.Stat(p2)
@@ -370,13 +357,8 @@ func validateAndIndex(ctx *ctx, path string) error {
 	return nil
 }
 
-// This is in the server module because it needs almost the same context. No
-// need to keep it in the server process though. If another process
-// simultaneously indexes the same files the worst thing that can happen is
-// non-deterministic SQLite3 INSERT.
 func Index(paths []string) {
 	ctx := newCtx()
-	defer ctx.Close()
 
 	for _, path := range paths {
 		if err := validateAndIndex(ctx, path); err != nil {
@@ -387,7 +369,14 @@ func Index(paths []string) {
 
 func Main() {
 	ctx := newCtx()
-	defer ctx.Close()
+
+	err := loadEmbeddings(ctx)
+	if err != nil {
+		log.Printf("failed to load embeddings: %v", err)
+		os.Exit(1)
+	}
+
+	log.Println(ctx.db.Stats())
 
 	installHandlers(ctx)
 

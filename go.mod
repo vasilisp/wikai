@@ -3,11 +3,10 @@ module github.com/vasilisp/wikai
 go 1.24.1
 
 require (
-	github.com/asg017/sqlite-vec-go-bindings v0.1.6
-	github.com/mattn/go-sqlite3 v1.14.27
 	github.com/microcosm-cc/bluemonday v1.0.27
 	github.com/openai/openai-go v0.1.0-beta.5
 	github.com/yuin/goldmark v1.7.8
+	gonum.org/v1/gonum v0.16.0
 )
 
 require (

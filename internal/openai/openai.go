@@ -44,7 +44,7 @@ func splitTextIntoChunks(text string, chunkSize int) *[]string {
 	return &chunks
 }
 
-func (c *Client) Embed(str string) ([]float32, error) {
+func (c *Client) Embed(str string) ([]float64, error) {
 	util.Assert(c != nil, "embed nil client")
 	util.Assert(str != "", "embed empty string")
 
@@ -66,12 +66,8 @@ func (c *Client) Embed(str string) ([]float32, error) {
 	}
 
 	vector := embedding.Data[0].Embedding
-	vectorFloat32 := make([]float32, len(vector))
-	for i, v := range vector {
-		vectorFloat32[i] = float32(v)
-	}
 
-	return vectorFloat32, nil
+	return vector, nil
 }
 
 func extractGPTResponse(chatCompletion *openai.ChatCompletion) (string, error) {

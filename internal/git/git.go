@@ -1,11 +1,13 @@
 package git
 
 import (
+	"bufio"
 	"fmt"
 	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 type Repo struct {
@@ -59,9 +61,11 @@ func initRepo(path string, gitIgnore string) (Repo, error) {
 
 	repo := Repo{path: path}
 
-	err = repo.addGitIgnore(gitIgnore)
-	if err != nil {
-		return Repo{}, fmt.Errorf("failed to add gitignore to %s: %v", path, err)
+	if gitIgnore != "" {
+		err = repo.addGitIgnore(gitIgnore)
+		if err != nil {
+			return Repo{}, fmt.Errorf("failed to add gitignore to %s: %v", path, err)
+		}
 	}
 
 	return repo, nil
@@ -85,14 +89,111 @@ func NewRepo(path string, gitIgnore string) (Repo, error) {
 	return Repo{path: path}, nil
 }
 
-func (r Repo) AddVector(vectorBase64 string) error {
+func (r Repo) AddNote(note string) error {
 	// Add the vector as a note to the latest commit
-	noteCmd := exec.Command("git", "notes", "append", "-m", vectorBase64, "HEAD")
+	noteCmd := exec.Command("git", "notes", "append", "-m", note, "HEAD")
 	noteCmd.Dir = r.path
 
 	if err := noteCmd.Run(); err != nil {
-		return fmt.Errorf("failed to add vector note: %v", err)
+		return fmt.Errorf("failed to add note: %v", err)
 	}
 
 	return nil
+}
+
+func (r Repo) getNotes() ([]string, error) {
+	noteCmd := exec.Command("git", "notes", "list")
+	noteCmd.Dir = r.path
+
+	stdout, err := noteCmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get stdout pipe: %v", err)
+	}
+
+	if err := noteCmd.Start(); err != nil {
+		return nil, fmt.Errorf("failed to start notes command: %v", err)
+	}
+
+	scanner := bufio.NewScanner(stdout)
+	result := make([]string, 0)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if idx := strings.Index(line, " "); idx > 0 {
+			result = append(result, line[:idx])
+		} else if line != "" {
+			result = append(result, line)
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("failed to scan notes: %v", err)
+	}
+	if err := noteCmd.Wait(); err != nil {
+		return nil, fmt.Errorf("failed to wait for notes command: %v", err)
+	}
+
+	return result, nil
+}
+
+func (r Repo) getNoteContents(noteRefs []string, handle func(string)) error {
+	if len(noteRefs) == 0 {
+		return nil
+	}
+
+	catCmd := exec.Command("git", "cat-file", "--batch=")
+	catCmd.Dir = r.path
+
+	stdin, err := catCmd.StdinPipe()
+	if err != nil {
+		return fmt.Errorf("failed to get stdin pipe: %v", err)
+	}
+
+	stdout, err := catCmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("failed to get stdout pipe: %v", err)
+	}
+
+	if err := catCmd.Start(); err != nil {
+		return fmt.Errorf("failed to start cat-file command: %v", err)
+	}
+
+	// Write all note refs to stdin
+	for _, ref := range noteRefs {
+		if _, err := fmt.Fprintln(stdin, ref); err != nil {
+			stdin.Close()
+			return fmt.Errorf("failed to write to stdin: %v", err)
+		}
+	}
+	stdin.Close()
+
+	// Read the contents from stdout
+	scanner := bufio.NewScanner(stdout)
+
+	for scanner.Scan() {
+		content := scanner.Text()
+
+		if content != "" {
+			handle(content)
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("failed to scan cat-file output: %v", err)
+	}
+
+	if err := catCmd.Wait(); err != nil {
+		return fmt.Errorf("failed to wait for cat-file command: %v", err)
+	}
+
+	return nil
+}
+
+func (r Repo) GetNoteContents(handle func(string)) error {
+	noteRefs, err := r.getNotes()
+	if err != nil {
+		return fmt.Errorf("failed to get notes: %v", err)
+	}
+
+	return r.getNoteContents(noteRefs, handle)
 }
