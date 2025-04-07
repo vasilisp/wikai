@@ -6,15 +6,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"time"
 )
 
 type Embedding struct {
 	ID     string
+	Stamp  time.Time
 	Vector []float64
 }
 
 type jsonEmbedding struct {
 	ID     string `json:"id"`
+	Stamp  int64  `json:"stamp"`
 	Vector string `json:"vector"`
 }
 
@@ -26,6 +29,7 @@ func (e Embedding) MarshalJSON() ([]byte, error) {
 
 	temp := jsonEmbedding{
 		ID:     e.ID,
+		Stamp:  e.Stamp.Unix(),
 		Vector: base64.StdEncoding.EncodeToString(buf),
 	}
 
@@ -51,5 +55,6 @@ func (e *Embedding) UnmarshalJSON(data []byte) error {
 
 	e.ID = temp.ID
 	e.Vector = vector
+	e.Stamp = time.Unix(temp.Stamp, 0)
 	return nil
 }
