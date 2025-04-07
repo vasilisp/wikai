@@ -4,8 +4,9 @@ import (
 	"container/heap"
 	"fmt"
 	"sort"
+	"time"
 
-	"github.com/vasilisp/wikai/pkg/embedding"
+	"github.com/vasilisp/wikai/internal/util"
 	"gonum.org/v1/gonum/mat"
 )
 
@@ -28,18 +29,31 @@ func cosineDistance(a, b []float64) float64 {
 	return 1 - cosineSimilarity(a, b)
 }
 
+type row struct {
+	vector []float64
+	stamp  time.Time
+}
+
 type DB struct {
-	embeddings *[]embedding.Embedding
+	rows map[string]row
 }
 
 func NewDB() DB {
-	embeddings := make([]embedding.Embedding, 0, 128)
+	rows := make(map[string]row)
 
-	return DB{embeddings: &embeddings}
+	return DB{rows: rows}
 }
 
-func (db DB) Add(id string, emb []float64) {
-	*db.embeddings = append(*db.embeddings, embedding.Embedding{ID: id, Vector: emb})
+func (db DB) Add(id string, emb []float64, stamp time.Time) {
+	util.Assert(db.rows != nil, "Add nil embeddings")
+
+	if _, ok := db.rows[id]; ok {
+		if db.rows[id].stamp.After(stamp) {
+			return
+		}
+	}
+
+	db.rows[id] = row{vector: emb, stamp: stamp}
 }
 
 type resultHeap []Result
@@ -91,22 +105,20 @@ func (br bestResults) Get() []Result {
 }
 
 func (db DB) Search(query []float64, maxResults int) ([]Result, error) {
-	if db.embeddings == nil {
-		return nil, fmt.Errorf("Search nil embeddings")
-	}
+	util.Assert(db.rows != nil, "Search nil embeddings")
 
 	bestResults := NewBestResults(maxResults)
 
 	// brute-force, calculate cosine similarity with all embeddings
-	for _, emb := range *db.embeddings {
-		if emb.Vector == nil {
+	for id, row := range db.rows {
+		if row.vector == nil {
 			continue
 		}
 
-		distance := cosineDistance(query, emb.Vector)
+		distance := cosineDistance(query, row.vector)
 
 		bestResults.Add(Result{
-			Path:     emb.ID,
+			Path:     id,
 			Distance: distance,
 		})
 	}
@@ -115,5 +127,7 @@ func (db DB) Search(query []float64, maxResults int) ([]Result, error) {
 }
 
 func (db DB) Stats() string {
-	return fmt.Sprintf("DB stats: %d embeddings", len(*db.embeddings))
+	util.Assert(db.rows != nil, "Stats nil embeddings")
+
+	return fmt.Sprintf("DB stats: %d rows", len(db.rows))
 }

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/microcosm-cc/bluemonday"
 	"github.com/vasilisp/wikai/internal/api"
@@ -38,7 +39,7 @@ func loadEmbeddings(ctx *ctx) error {
 		if err := json.Unmarshal([]byte(embJSON), &emb); err != nil {
 			log.Printf("failed to unmarshal embedding: %v", err)
 		}
-		ctx.db.Add(emb.ID, emb.Vector)
+		ctx.db.Add(emb.ID, emb.Vector, emb.Stamp)
 	})
 }
 
@@ -78,6 +79,7 @@ func index(ctx *ctx, page *api.Page) error {
 	emb := embedding.Embedding{
 		ID:     page.Path,
 		Vector: vector,
+		Stamp:  time.Now(),
 	}
 	embJSON, err := json.Marshal(emb)
 	if err != nil {
@@ -94,7 +96,7 @@ func index(ctx *ctx, page *api.Page) error {
 		return fmt.Errorf("Failed to add vector to git: %v", err)
 	}
 
-	ctx.db.Add(page.Path, vector)
+	ctx.db.Add(page.Path, vector, emb.Stamp)
 
 	return nil
 }
