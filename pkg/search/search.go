@@ -2,7 +2,6 @@ package search
 
 import (
 	"container/heap"
-	"fmt"
 	"sort"
 	"time"
 
@@ -126,8 +125,8 @@ func (db DB) Search(query []float64, maxResults int) ([]Result, error) {
 	return bestResults.Get(), nil
 }
 
-func (db DB) Stats() string {
+func (db DB) NumRows() int {
 	util.Assert(db.rows != nil, "Stats nil embeddings")
 
-	return fmt.Sprintf("DB stats: %d rows", len(db.rows))
+	return len(db.rows)
 }

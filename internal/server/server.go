@@ -33,14 +33,22 @@ type ctx struct {
 
 func loadEmbeddings(ctx *ctx) error {
 	util.Assert(ctx != nil, "loadEmbeddings nil ctx")
+	start := time.Now()
 
-	return ctx.git.GetNoteContents(func(embJSON string) {
+	err := ctx.git.GetNoteContents(func(embJSON string) {
 		var emb embedding.Embedding
 		if err := json.Unmarshal([]byte(embJSON), &emb); err != nil {
 			log.Printf("failed to unmarshal embedding: %v", err)
 		}
 		ctx.db.Add(emb.ID, emb.Vector, emb.Stamp)
 	})
+	if err != nil {
+		return fmt.Errorf("failed to get note contents: %w", err)
+	}
+
+	log.Printf("loaded %d embeddings in %.2f seconds", ctx.db.NumRows(), time.Since(start).Seconds())
+
+	return nil
 }
 
 func newCtx() *ctx {
@@ -377,8 +385,6 @@ func Main() {
 		log.Printf("failed to load embeddings: %v", err)
 		os.Exit(1)
 	}
-
-	log.Println(ctx.db.Stats())
 
 	installHandlers(ctx)
 
