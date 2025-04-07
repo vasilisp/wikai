@@ -128,8 +128,6 @@ func (db DB) Search(query []float64, maxResults int) ([]Result, error) {
 func (db DB) DocStamp(id string) (time.Time, bool) {
 	util.Assert(db.rows != nil, "DocStamp nil embeddings")
 
-	println("DocStamp", id)
-
 	row, ok := db.rows[id]
 	if ok {
 		return row.stamp, true
