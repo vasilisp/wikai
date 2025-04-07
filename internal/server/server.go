@@ -139,7 +139,8 @@ func searchPages(ctx *ctx, query string) ([]search.Result, error) {
 func wikiHandler(ctx *ctx, w http.ResponseWriter, r *http.Request) {
 	// Get the page path from the URL, removing prefix
 	prefixLen := len(ctx.config.WikiPrefix)
-	pagePath := r.URL.Path[prefixLen:]
+	util.Assert(len(r.URL.Path) >= prefixLen+2, "wikiHandler empty page path")
+	pagePath := r.URL.Path[prefixLen+1:]
 
 	wikiPath0, err := wikiPath(ctx.config)
 	if err != nil {
@@ -174,7 +175,16 @@ func wikiHandler(ctx *ctx, w http.ResponseWriter, r *http.Request) {
 
 	// Render template with content
 	tmpl := template.Must(template.New("wiki").Parse(string(data.WikiTemplate)))
-	if err := tmpl.Execute(w, struct{ Content string }{string(html)}); err != nil {
+	docStampStr := "unknown"
+	docStamp, ok := ctx.db.DocStamp(pagePath)
+	if ok {
+		docStampStr = docStamp.Format("2006-01-02 15:04:05")
+	}
+
+	if err := tmpl.Execute(w, struct {
+		Content string
+		Stamp   string
+	}{string(html), docStampStr}); err != nil {
 		http.Error(w, "Failed to render template", http.StatusInternalServerError)
 		return
 	}

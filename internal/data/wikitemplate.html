@@ -6,8 +6,12 @@
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <div class="wiki-container">
+  <div id="wiki-container">
     {{ .Content }}
+
+    <div id="wiki-stamp">
+      <span class="wiki-stamp-text">last updated {{ .Stamp }}</span>
+    </div>
   </div>
 </body>
 </html>

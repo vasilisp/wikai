@@ -2,7 +2,7 @@ body {
   font-family: 'Arial', sans-serif;
 }
 
-.wiki-container {
+#wiki-container {
   max-width: 800px;
   margin: 0 auto;
 }

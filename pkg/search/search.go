@@ -125,6 +125,19 @@ func (db DB) Search(query []float64, maxResults int) ([]Result, error) {
 	return bestResults.Get(), nil
 }
 
+func (db DB) DocStamp(id string) (time.Time, bool) {
+	util.Assert(db.rows != nil, "DocStamp nil embeddings")
+
+	println("DocStamp", id)
+
+	row, ok := db.rows[id]
+	if ok {
+		return row.stamp, true
+	}
+
+	return time.Time{}, false
+}
+
 func (db DB) NumRows() int {
 	util.Assert(db.rows != nil, "Stats nil embeddings")
 
