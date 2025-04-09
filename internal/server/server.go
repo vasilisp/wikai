@@ -94,7 +94,7 @@ func index(ctx *ctx, page *api.Page) error {
 		return fmt.Errorf("Failed to marshal embedding: %v", err)
 	}
 
-	err = ctx.git.Commit(fmt.Sprintf("Add %s", page.Path))
+	err = ctx.git.Commit(fmt.Sprintf("Add %s", page.Path), true)
 	if err != nil {
 		return fmt.Errorf("Failed to commit page to git: %v", err)
 	}
@@ -295,6 +295,74 @@ func aiHandler(ctx *ctx, w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func PathsPhysicallyEqual(p1, p2 string) bool {
+	info1, err1 := os.Stat(p1)
+	info2, err2 := os.Stat(p2)
+
+	if err1 != nil || err2 != nil {
+		log.Printf("Error statting paths: %v, %v", err1, err2)
+		return false
+	}
+
+	return os.SameFile(info1, info2)
+}
+
+func validateAndIndex(ctx *ctx, path string) error {
+	util.Assert(ctx != nil, "validateAndIndex nil ctx")
+
+	path = strings.TrimSuffix(path, ".md")
+
+	if err := util.ValidatePagePath(path); err != nil {
+		return fmt.Errorf("invalid page path: %w", err)
+	}
+
+	wikiPath0, err := wikiPath(ctx.config)
+	if err != nil {
+		return fmt.Errorf("failed to get wiki path: %w", err)
+	}
+	fullPath := filepath.Join(wikiPath0, path+".md")
+
+	content, err := os.ReadFile(fullPath)
+	if err != nil {
+		return fmt.Errorf("failed to read page %s: %w", path, err)
+	}
+
+	page := api.Page{
+		Path:    path,
+		Content: string(content),
+	}
+
+	err = index(ctx, &page)
+	if err != nil {
+		return fmt.Errorf("failed to index page %s: %w", path, err)
+	}
+
+	return nil
+}
+
+func indexHandler(ctx *ctx, w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Failed to read request body", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	paths := strings.Split(string(body), "\n")
+	for _, path := range paths {
+		if err := validateAndIndex(ctx, path); err != nil {
+			log.Printf("failed to index page %s: %v", path, err)
+			http.Error(w, "Failed to index page", http.StatusInternalServerError)
+			return
+		}
+	}
+}
+
 func handlerWith[T interface{}](t T, fn func(T, http.ResponseWriter, *http.Request)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		fn(t, w, r)
@@ -318,6 +386,7 @@ func installHandlers(ctx *ctx) {
 	})
 
 	http.HandleFunc(api.PostPath, handlerWith(ctx, aiHandler))
+	http.HandleFunc(api.IndexPath, handlerWith(ctx, indexHandler))
 	http.HandleFunc(ctx.config.WikiPrefix+"/", handlerWith(ctx, wikiHandler))
 
 	// Serve style.css
@@ -326,65 +395,6 @@ func installHandlers(ctx *ctx) {
 		w.Header().Set("Content-Type", "text/css")
 		w.Write(data.StyleCSS)
 	})
-}
-
-func PathsPhysicallyEqual(p1, p2 string) bool {
-	info1, err1 := os.Stat(p1)
-	info2, err2 := os.Stat(p2)
-
-	if err1 != nil || err2 != nil {
-		log.Printf("Error statting paths: %v, %v", err1, err2)
-		return false
-	}
-
-	return os.SameFile(info1, info2)
-}
-
-func validateAndIndex(ctx *ctx, path string) error {
-	util.Assert(ctx != nil, "validateAndIndex nil ctx")
-
-	pagePath := strings.TrimSuffix(filepath.Base(path), ".md")
-
-	if err := util.ValidatePagePath(pagePath); err != nil {
-		return fmt.Errorf("invalid page path: %w", err)
-	}
-
-	wikiPath0, err := wikiPath(ctx.config)
-	if err != nil {
-		return fmt.Errorf("failed to get wiki path: %w", err)
-	}
-
-	path2 := filepath.Join(wikiPath0, pagePath+".md")
-	if !PathsPhysicallyEqual(path, path2) {
-		return fmt.Errorf("path %s is outside managed directory", path)
-	}
-
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("failed to read page %s: %w", path, err)
-	}
-
-	page := api.Page{
-		Path:    pagePath,
-		Content: string(content),
-	}
-
-	err = index(ctx, &page)
-	if err != nil {
-		return fmt.Errorf("failed to index page %s: %w", pagePath, err)
-	}
-
-	return nil
-}
-
-func Index(paths []string) {
-	ctx := newCtx()
-
-	for _, path := range paths {
-		if err := validateAndIndex(ctx, path); err != nil {
-			log.Printf("failed to index page %s: %v", path, err)
-		}
-	}
 }
 
 func Main() {

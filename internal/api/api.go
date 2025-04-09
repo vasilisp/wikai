@@ -1,6 +1,7 @@
 package api
 
 const PostPath = "/ai"
+const IndexPath = "/index"
 
 type Page struct {
 	Title   string `json:"title"`

@@ -20,8 +20,14 @@ func (r Repo) Add(file string) error {
 	return cmd.Run()
 }
 
-func (r Repo) Commit(message string) error {
-	cmd := exec.Command("git", "commit", "-m", message)
+func (r Repo) Commit(message string, allowEmpty bool) error {
+	var args []string
+	if allowEmpty {
+		args = []string{"commit", "-m", message, "--allow-empty"}
+	} else {
+		args = []string{"commit", "-m", message}
+	}
+	cmd := exec.Command("git", args...)
 	cmd.Dir = r.path
 	return cmd.Run()
 }
@@ -42,7 +48,7 @@ func (r Repo) addGitIgnore(gitIgnore string) error {
 		return fmt.Errorf("failed to add gitignore to %s: %v", gitIgnorePath, err)
 	}
 
-	err = r.Commit("Add gitignore")
+	err = r.Commit("Add gitignore", false)
 	if err != nil {
 		return fmt.Errorf("failed to commit gitignore to %s: %v", gitIgnorePath, err)
 	}

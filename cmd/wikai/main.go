@@ -22,7 +22,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Usage: %s index <paths>\n", os.Args[0])
 			os.Exit(1)
 		}
-		server.Index(os.Args[2:])
+		cli.Index(os.Args[2:])
 	case "server":
 		server.Main()
 	}
