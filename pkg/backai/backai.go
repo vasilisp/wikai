@@ -159,7 +159,7 @@ func (ctx *Ctx) Query(userQuery string) (Response, error) {
 
 	doSummarize, ok := store.Get(chat.Store(), ctx.doSummarizeVar)
 	if ok && doSummarize {
-		return Response{}, errors.New("internal error: no ")
+		return Response{}, errors.New("internal error: no response")
 	}
 
 	return Response{
