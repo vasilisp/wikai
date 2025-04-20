@@ -11,6 +11,7 @@ import (
 
 	"github.com/vasilisp/wikai/internal/api"
 	"github.com/vasilisp/wikai/internal/util"
+	"github.com/vasilisp/wikai/pkg/backai"
 )
 
 func askGPT(args []string, port int) {
@@ -44,7 +45,7 @@ func askGPT(args []string, port int) {
 	defer resp.Body.Close()
 
 	// Read response
-	var result api.PostResponse
+	var result backai.Response
 
 	if resp.StatusCode != http.StatusOK {
 		log.Fatalf("Failed to get response: %s", resp.Status)

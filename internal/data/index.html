@@ -21,15 +21,16 @@
           return message;
         }
 
-        // Convert message text containing [n] into elements with links
-        const parts = message.text.split(/(\[\d+\])/);
+        // Convert message text containing [doc-id] into links if doc-id exists in links
+        const parts = message.text.split(/(\[[^\]]+\])/);
         const elements = parts.map((part, index) => {
-          const match = part.match(/\[(\d+)\]/);
+          const match = part.match(/\[([^\]]+)\]/);
           if (match) {
-            const num = parseInt(match[1]) - 1;
-            if (message.links && num >= 0 && num < message.links.length) {
+            const docId = match[1];
+            const link = message.links?.find(l => l.text === docId);
+            if (link) {
               return (
-                <a key={index} href={message.links[num].url}>
+                <a key={index} href={link.url}>
                   {part}
                 </a>
               );

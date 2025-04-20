@@ -19,6 +19,7 @@ import (
 	"github.com/vasilisp/wikai/internal/git"
 	"github.com/vasilisp/wikai/internal/openai"
 	"github.com/vasilisp/wikai/internal/util"
+	"github.com/vasilisp/wikai/pkg/backai"
 	"github.com/vasilisp/wikai/pkg/embedding"
 	"github.com/vasilisp/wikai/pkg/search"
 	"github.com/yuin/goldmark"
@@ -68,24 +69,25 @@ func newCtx() *ctx {
 	}
 }
 
-func index(ctx *ctx, page *api.Page) error {
+func index(ctx *ctx, path, content string) error {
 	util.Assert(ctx != nil, "index nil ctx")
-	util.Assert(page != nil, "index nil page")
+	util.Assert(path != "", "index empty path")
+	util.Assert(content != "", "index empty content")
 
-	vector, err := ctx.openai.Embed(page.Content)
+	vector, err := ctx.openai.Embed(content)
 	if err != nil {
 		return fmt.Errorf("Failed to vectorize page: %v", err)
 	} else {
-		log.Printf("vectorized page %s", page.Path)
+		log.Printf("vectorized page %s", path)
 	}
 
-	err = ctx.git.Add(page.Path + ".md")
+	err = ctx.git.Add(path + ".md")
 	if err != nil {
 		return fmt.Errorf("Failed to add page to git: %v", err)
 	}
 
 	emb := embedding.Embedding{
-		ID:     page.Path,
+		ID:     path,
 		Vector: vector,
 		Stamp:  time.Now(),
 	}
@@ -94,7 +96,7 @@ func index(ctx *ctx, page *api.Page) error {
 		return fmt.Errorf("Failed to marshal embedding: %v", err)
 	}
 
-	err = ctx.git.Commit(fmt.Sprintf("Add %s", page.Path), true)
+	err = ctx.git.Commit(fmt.Sprintf("Add %s", path), true)
 	if err != nil {
 		return fmt.Errorf("Failed to commit page to git: %v", err)
 	}
@@ -104,36 +106,9 @@ func index(ctx *ctx, page *api.Page) error {
 		return fmt.Errorf("Failed to add vector to git: %v", err)
 	}
 
-	ctx.db.Add(page.Path, vector, emb.Stamp)
+	ctx.db.Add(path, vector, emb.Stamp)
 
 	return nil
-}
-
-func writePage(ctx *ctx, page *api.Page) error {
-	util.Assert(ctx != nil, "writePage nil ctx")
-	util.Assert(page != nil, "writePage nil page")
-
-	fullPath := filepath.Join(ctx.config.WikiPath, page.Path+".md")
-
-	// FIXME transactional write+insert
-	if err := os.WriteFile(fullPath, []byte(page.Content), 0644); err != nil {
-		return fmt.Errorf("Failed to write page: %v", err)
-	} else {
-		log.Printf("wrote page %s at %s", page.Path, fullPath)
-	}
-
-	return index(ctx, page)
-}
-
-func searchPages(ctx *ctx, query string) ([]search.Result, error) {
-	util.Assert(ctx != nil, "searchPages nil ctx")
-
-	vector, err := ctx.openai.Embed(query)
-	if err != nil {
-		return nil, fmt.Errorf("failed to vectorize query: %v", err)
-	}
-
-	return ctx.db.Search(vector, 5)
 }
 
 func wikiHandler(ctx *ctx, w http.ResponseWriter, r *http.Request) {
@@ -190,20 +165,47 @@ func wikiHandler(ctx *ctx, w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func summarizeSearchResults(ctx *ctx, userQuery string, results []search.Result) (string, openai.Irrelevant, error) {
-	util.Assert(ctx != nil, "summarizeSearchResults nil ctx")
-	util.Assert(len(results) > 0, "summarizeSearchResults empty results")
-
-	documents := make([]string, 0, len(results))
-	for _, result := range results {
-		content, err := os.ReadFile(filepath.Join(ctx.config.WikiPath, result.Path+".md"))
-		if err != nil {
-			return "", nil, fmt.Errorf("failed to read page: %v", err)
-		}
-		documents = append(documents, string(content))
+func (ctx *ctx) Search(query string) ([]string, error) {
+	vector, err := ctx.openai.Embed(query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to vectorize query: %v", err)
 	}
 
-	return ctx.openai.Summarize(userQuery, documents)
+	results, err := ctx.db.Search(vector, 5)
+	if err != nil {
+		return nil, fmt.Errorf("search failed: %v", err)
+	}
+
+	paths := make([]string, len(results))
+	for i, result := range results {
+		paths[i] = result.Path
+	}
+	return paths, nil
+}
+
+func (ctx *ctx) Read(path string) (string, error) {
+	content, err := os.ReadFile(filepath.Join(ctx.config.WikiPath, path+".md"))
+	if err != nil {
+		return "", fmt.Errorf("failed to read page: %v", err)
+	}
+	return string(content), nil
+}
+
+func (ctx *ctx) Write(path string, content string) error {
+	util.Assert(ctx != nil, "writePage nil ctx")
+	util.Assert(path != "", "writePage empty path")
+	util.Assert(content != "", "writePage empty content")
+
+	fullPath := filepath.Join(ctx.config.WikiPath, path+".md")
+
+	// FIXME transactional write+insert
+	if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
+		return fmt.Errorf("Failed to write page: %v", err)
+	} else {
+		log.Printf("wrote page %s at %s", path, fullPath)
+	}
+
+	return index(ctx, path, content)
 }
 
 func aiHandler(ctx *ctx, w http.ResponseWriter, r *http.Request) {
@@ -226,85 +228,22 @@ func aiHandler(ctx *ctx, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	gptResp, err := ctx.openai.DefaultAskGPT(userQuery)
+	bai := backai.NewCtx(ctx, ctx.config.WikiPrefix, ctx.config.OpenAIToken)
+	aiResponse, err := bai.Query(userQuery)
 	if err != nil {
-		http.Error(w, "Failed to process query", http.StatusInternalServerError)
-		return
-	}
-
-	aiResponse, err := openai.ParseResponse(gptResp)
-	if err != nil {
-		http.Error(w, "Failed to parse AI response", http.StatusInternalServerError)
+		log.Printf("LLM error: %v", err)
+		http.Error(w, "LLM error", http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 
-	response := api.PostResponse{}
-
-	// Prepare JSON response
-	switch aiResponse.Kind {
-	case openai.KindPage:
-		page, err := openai.PageOfResponse(aiResponse)
-		if err != nil {
-			log.Printf("Failed to parse page: %v", err)
-			http.Error(w, "Failed to parse page AI response", http.StatusInternalServerError)
-			return
-		}
-		if err := writePage(ctx, page); err != nil {
-			log.Printf("Failed to write page %s: %v", page.Path, err)
-			http.Error(w, "Failed to write page", http.StatusInternalServerError)
-			return
-		}
-		response.Message = "I saved a new note for you."
-		response.ReferencePrefix = ctx.config.WikiPrefix
-		response.References = []string{page.Path}
-	case openai.KindSearch:
-		log.Printf("search query: %s", aiResponse.Content)
-		pages, err := searchPages(ctx, aiResponse.Content)
-		if err != nil {
-			log.Printf("Failed to search pages: %v", err)
-			http.Error(w, "Failed to search pages", http.StatusInternalServerError)
-			return
-		}
-		if len(pages) == 0 {
-			response.Message = "I found no notes for you."
-		} else {
-			summary, irrelevant, err := summarizeSearchResults(ctx, userQuery, pages)
-			if err != nil {
-				log.Printf("Failed to summarize search results: %v", err)
-				response.Message = "I found some notes for you."
-			} else {
-				response.Message = summary
-			}
-			response.ReferencePrefix = ctx.config.WikiPrefix
-			response.References = make([]string, 0, len(pages))
-			for i, page := range pages {
-				if _, ok := irrelevant[i]; !ok {
-					response.References = append(response.References, page.Path)
-				}
-			}
-		}
-	case openai.KindUnknown:
-		response.Message = aiResponse.Content
+	response := backai.Response{
+		Message:         aiResponse.Message,
+		References:      aiResponse.References,
+		ReferencePrefix: aiResponse.ReferencePrefix,
 	}
-
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
-		return
-	}
-}
-
-func PathsPhysicallyEqual(p1, p2 string) bool {
-	info1, err1 := os.Stat(p1)
-	info2, err2 := os.Stat(p2)
-
-	if err1 != nil || err2 != nil {
-		log.Printf("Error statting paths: %v, %v", err1, err2)
-		return false
-	}
-
-	return os.SameFile(info1, info2)
+	json.NewEncoder(w).Encode(response)
 }
 
 func validateAndIndex(ctx *ctx, path string) error {
@@ -327,12 +266,7 @@ func validateAndIndex(ctx *ctx, path string) error {
 		return fmt.Errorf("failed to read page %s: %w", path, err)
 	}
 
-	page := api.Page{
-		Path:    path,
-		Content: string(content),
-	}
-
-	err = index(ctx, &page)
+	err = index(ctx, path, string(content))
 	if err != nil {
 		return fmt.Errorf("failed to index page %s: %w", path, err)
 	}
