@@ -17,19 +17,16 @@ import (
 	"github.com/vasilisp/wikai/internal/api"
 	"github.com/vasilisp/wikai/internal/data"
 	"github.com/vasilisp/wikai/internal/git"
-	"github.com/vasilisp/wikai/internal/openai"
 	"github.com/vasilisp/wikai/internal/util"
 	"github.com/vasilisp/wikai/pkg/backai"
 	"github.com/vasilisp/wikai/pkg/embedding"
-	"github.com/vasilisp/wikai/pkg/search"
 	"github.com/yuin/goldmark"
 )
 
 type ctx struct {
 	config *config
-	openai *openai.Client
 	git    git.Repo
-	db     search.DB
+	bai    *backai.Ctx
 }
 
 func loadEmbeddings(ctx *ctx) error {
@@ -41,13 +38,13 @@ func loadEmbeddings(ctx *ctx) error {
 		if err := json.Unmarshal([]byte(embJSON), &emb); err != nil {
 			log.Printf("failed to unmarshal embedding: %v", err)
 		}
-		ctx.db.Add(emb.ID, emb.Vector, emb.Stamp)
+		ctx.bai.DB().Add(emb.ID, emb.Vector, emb.Stamp)
 	})
 	if err != nil {
 		return fmt.Errorf("failed to get note contents: %w", err)
 	}
 
-	log.Printf("loaded %d embeddings in %.2f seconds", ctx.db.NumRows(), time.Since(start).Seconds())
+	log.Printf("loaded %d embeddings in %.2f seconds", ctx.bai.DB().NumRows(), time.Since(start).Seconds())
 
 	return nil
 }
@@ -56,32 +53,27 @@ func newCtx() *ctx {
 	config := loadConfig()
 	util.Assert(config != nil, "newCtx nil config")
 
-	openai := openai.NewClient(config.OpenAIToken, config.EmbeddingDimensions)
-
 	git, err := git.NewRepo(config.WikiPath, "")
 	util.Assert(err == nil, "newCtx failed to create git repo")
 
-	return &ctx{
+	ctx := ctx{
 		config: config,
-		openai: openai,
 		git:    git,
-		db:     search.NewDB(),
 	}
+
+	ctx.bai = backai.NewCtx(&ctx, ctx.config.WikiPrefix, ctx.config.OpenAIToken, ctx.config.EmbeddingDimensions)
+
+	return &ctx
 }
 
-func index(ctx *ctx, path, content string) error {
+func index(ctx *ctx, path, content string, vector []float64) error {
 	util.Assert(ctx != nil, "index nil ctx")
 	util.Assert(path != "", "index empty path")
 	util.Assert(content != "", "index empty content")
+	util.Assert(vector != nil, "index nil vector")
+	util.Assert(len(vector) > 0, "index empty vector")
 
-	vector, err := ctx.openai.Embed(content)
-	if err != nil {
-		return fmt.Errorf("Failed to vectorize page: %v", err)
-	} else {
-		log.Printf("vectorized page %s", path)
-	}
-
-	err = ctx.git.Add(path + ".md")
+	err := ctx.git.Add(path + ".md")
 	if err != nil {
 		return fmt.Errorf("Failed to add page to git: %v", err)
 	}
@@ -105,8 +97,6 @@ func index(ctx *ctx, path, content string) error {
 	if err != nil {
 		return fmt.Errorf("Failed to add vector to git: %v", err)
 	}
-
-	ctx.db.Add(path, vector, emb.Stamp)
 
 	return nil
 }
@@ -151,7 +141,7 @@ func wikiHandler(ctx *ctx, w http.ResponseWriter, r *http.Request) {
 	// Render template with content
 	tmpl := template.Must(template.New("wiki").Parse(string(data.WikiTemplate)))
 	docStampStr := "unknown"
-	docStamp, ok := ctx.db.DocStamp(pagePath)
+	docStamp, ok := ctx.bai.DB().DocStamp(pagePath)
 	if ok {
 		docStampStr = docStamp.Format("2006-01-02 15:04:05")
 	}
@@ -165,24 +155,6 @@ func wikiHandler(ctx *ctx, w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (ctx *ctx) Search(query string) ([]string, error) {
-	vector, err := ctx.openai.Embed(query)
-	if err != nil {
-		return nil, fmt.Errorf("failed to vectorize query: %v", err)
-	}
-
-	results, err := ctx.db.Search(vector, 5)
-	if err != nil {
-		return nil, fmt.Errorf("search failed: %v", err)
-	}
-
-	paths := make([]string, len(results))
-	for i, result := range results {
-		paths[i] = result.Path
-	}
-	return paths, nil
-}
-
 func (ctx *ctx) Read(path string) (string, error) {
 	content, err := os.ReadFile(filepath.Join(ctx.config.WikiPath, path+".md"))
 	if err != nil {
@@ -191,7 +163,7 @@ func (ctx *ctx) Read(path string) (string, error) {
 	return string(content), nil
 }
 
-func (ctx *ctx) Write(path string, content string) error {
+func (ctx *ctx) Write(path string, content string, embedding []float64) error {
 	util.Assert(ctx != nil, "writePage nil ctx")
 	util.Assert(path != "", "writePage empty path")
 	util.Assert(content != "", "writePage empty content")
@@ -205,7 +177,7 @@ func (ctx *ctx) Write(path string, content string) error {
 		log.Printf("wrote page %s at %s", path, fullPath)
 	}
 
-	return index(ctx, path, content)
+	return index(ctx, path, content, embedding)
 }
 
 func aiHandler(ctx *ctx, w http.ResponseWriter, r *http.Request) {
@@ -228,8 +200,7 @@ func aiHandler(ctx *ctx, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bai := backai.NewCtx(ctx, ctx.config.WikiPrefix, ctx.config.OpenAIToken)
-	aiResponse, err := bai.Query(userQuery)
+	aiResponse, err := ctx.bai.Query(userQuery)
 	if err != nil {
 		log.Printf("LLM error: %v", err)
 		http.Error(w, "LLM error", http.StatusInternalServerError)
@@ -266,7 +237,12 @@ func validateAndIndex(ctx *ctx, path string) error {
 		return fmt.Errorf("failed to read page %s: %w", path, err)
 	}
 
-	err = index(ctx, path, string(content))
+	embedding, err := ctx.bai.Embed(string(content))
+	if err != nil {
+		return fmt.Errorf("failed to embed page %s: %w", path, err)
+	}
+
+	err = index(ctx, path, string(content), embedding)
 	if err != nil {
 		return fmt.Errorf("failed to index page %s: %w", path, err)
 	}

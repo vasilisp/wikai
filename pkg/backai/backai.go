@@ -6,17 +6,19 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/vasilisp/lingograph"
 	"github.com/vasilisp/lingograph/openai"
 	"github.com/vasilisp/lingograph/store"
 	"github.com/vasilisp/wikai/internal/data"
+	"github.com/vasilisp/wikai/internal/util"
+	"github.com/vasilisp/wikai/pkg/search"
 )
 
 type WikiRW interface {
-	Search(query string) ([]string, error)
 	Read(path string) (string, error)
-	Write(path string, content string) error
+	Write(path string, content string, embedding []float64) error
 }
 
 type Ctx struct {
@@ -25,6 +27,17 @@ type Ctx struct {
 	doSummarizeVar    store.Var[bool]
 	responseVar       store.Var[Response]
 	wikiPrefix        string
+	embeddingClient   EmbeddingClient
+	db                search.DB
+}
+
+func (ctx *Ctx) DB() search.DB {
+	return ctx.db
+}
+
+func (ctx *Ctx) Embed(content string) ([]float64, error) {
+	util.Assert(ctx != nil, "Ctx is nil")
+	return ctx.embeddingClient.Embed(content)
 }
 
 type WriteArgs struct {
@@ -38,15 +51,41 @@ type SearchArgs struct {
 
 type Response struct {
 	Message         string   `json:"message,omitempty" jsonschema:"description:human-readable response message without any formatting"`
-	References      []string `json:"references,omitempty" jsonschema:"description:IDs of relevant documents"`
+	References      []string `json:"references,omitempty" jsonschema:"description:IDs of relevant documents; NOT the whole content of each document"`
 	ReferencePrefix string   `json:"reference_prefix,omitempty" jsonschema:"description:Web path for the reference IDs"`
 }
 
-func pipelineSearch(model openai.Model, wiki WikiRW, wikiPrefix string, doSummarizeVar store.Var[bool], responseVar store.Var[Response]) lingograph.Pipeline {
+func doSearch(embeddingClient EmbeddingClient, db search.DB, query string) ([]string, error) {
+	vector, err := embeddingClient.Embed(query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to vectorize query: %v", err)
+	}
+
+	results, err := db.Search(vector, 5)
+	if err != nil {
+		return nil, fmt.Errorf("search failed: %v", err)
+	}
+
+	paths := make([]string, len(results))
+	for i, result := range results {
+		paths[i] = result.Path
+	}
+
+	return paths, nil
+}
+
+func pipelineSearch(model openai.Model, db search.DB, embeddingClient EmbeddingClient, wiki WikiRW, wikiPrefix string, doSummarizeVar store.Var[bool], responseVar store.Var[Response]) lingograph.Pipeline {
 	actor := openai.NewActor(model, data.SystemPrompt)
 
 	openai.AddFunction(actor, "write", "Write a new note", func(args WriteArgs, r store.Store) (Response, error) {
-		err := wiki.Write(args.Path, args.Content)
+		embedding, err := embeddingClient.Embed(args.Content)
+		if err != nil {
+			return Response{}, fmt.Errorf("failed to embed content: %v", err)
+		}
+
+		err = wiki.Write(args.Path, args.Content, embedding)
+
+		db.Add(args.Path, embedding, time.Now())
 
 		if err != nil {
 			return Response{}, err
@@ -66,7 +105,7 @@ func pipelineSearch(model openai.Model, wiki WikiRW, wikiPrefix string, doSummar
 	openai.AddFunctionUnsafe(actor, "search", "Search for notes", func(query SearchArgs, r store.Store) ([]string, error) {
 		log.Printf("search query: %s", query.Query)
 
-		pages, err := wiki.Search(query.Query)
+		pages, err := doSearch(embeddingClient, db, query.Query)
 		if err != nil {
 			return nil, err
 		}
@@ -76,6 +115,8 @@ func pipelineSearch(model openai.Model, wiki WikiRW, wikiPrefix string, doSummar
 		}
 
 		store.Set(r, doSummarizeVar, true)
+
+		log.Printf("search results: %v", pages)
 
 		response := make([]string, 0, len(pages))
 		for _, page := range pages {
@@ -116,18 +157,23 @@ func pipelineSummarize(model openai.Model, wikiPrefix string, responseVar store.
 	return actor.Pipeline(nil, false, 3)
 }
 
-func NewCtx(wiki WikiRW, wikiPrefix string, apiKey string) *Ctx {
+func NewCtx(wiki WikiRW, wikiPrefix string, apiKey string, embeddingDimensions int) *Ctx {
 	model := openai.NewModel(openai.GPT4o, apiKey)
 
 	doSummarizeVar := store.FreshVar[bool]()
 	responseVar := store.FreshVar[Response]()
 
+	embeddingClient := NewEmbeddingClient(apiKey, embeddingDimensions)
+	db := search.NewDB()
+
 	return &Ctx{
-		pipelineSearch:    pipelineSearch(model, wiki, wikiPrefix, doSummarizeVar, responseVar),
+		pipelineSearch:    pipelineSearch(model, db, embeddingClient, wiki, wikiPrefix, doSummarizeVar, responseVar),
 		pipelineSummarize: pipelineSummarize(model, wikiPrefix, responseVar),
 		responseVar:       responseVar,
 		doSummarizeVar:    doSummarizeVar,
 		wikiPrefix:        wikiPrefix,
+		embeddingClient:   embeddingClient,
+		db:                db,
 	}
 }
 

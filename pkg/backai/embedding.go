@@ -1,4 +1,4 @@
-package openai
+package backai
 
 import (
 	"context"
@@ -9,19 +9,19 @@ import (
 	"github.com/vasilisp/wikai/internal/util"
 )
 
-type Client struct {
-	client              openai.Client
+type EmbeddingClient struct {
+	client              *openai.Client
 	embeddingDimensions int
 }
 
-func NewClient(token string, embeddingDimensions int) *Client {
+func NewEmbeddingClient(token string, embeddingDimensions int) EmbeddingClient {
 	util.Assert(token != "", "NewClient empty token")
 	util.Assert(embeddingDimensions > 0, "NewClient non-positive embeddingDimensions")
 
 	client := openai.NewClient(option.WithAPIKey(token))
 
-	return &Client{
-		client:              client,
+	return EmbeddingClient{
+		client:              &client,
 		embeddingDimensions: embeddingDimensions,
 	}
 }
@@ -29,6 +29,7 @@ func NewClient(token string, embeddingDimensions int) *Client {
 func splitTextIntoChunks(text string, chunkSize int) *[]string {
 	var chunks []string
 	runes := []rune(text) // Handle multi-byte characters
+
 	for i := 0; i < len(runes); i += chunkSize {
 		end := i + chunkSize
 		if end > len(runes) {
@@ -36,11 +37,11 @@ func splitTextIntoChunks(text string, chunkSize int) *[]string {
 		}
 		chunks = append(chunks, string(runes[i:end]))
 	}
+
 	return &chunks
 }
 
-func (c *Client) Embed(str string) ([]float64, error) {
-	util.Assert(c != nil, "embed nil client")
+func (c EmbeddingClient) Embed(str string) ([]float64, error) {
 	util.Assert(str != "", "embed empty string")
 
 	// Create embedding request
