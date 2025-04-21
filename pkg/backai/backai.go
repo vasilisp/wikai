@@ -74,8 +74,8 @@ func doSearch(embeddingClient EmbeddingClient, db search.DB, query string) ([]st
 	return paths, nil
 }
 
-func pipelineSearch(model openai.Model, db search.DB, embeddingClient EmbeddingClient, wiki WikiRW, wikiPrefix string, doSummarizeVar store.Var[bool], responseVar store.Var[Response]) lingograph.Pipeline {
-	actor := openai.NewActor(model, data.SystemPrompt)
+func pipelineSearch(client openai.Client, db search.DB, embeddingClient EmbeddingClient, wiki WikiRW, wikiPrefix string, doSummarizeVar store.Var[bool], responseVar store.Var[Response]) lingograph.Pipeline {
+	actor := openai.NewActor(client, openai.GPT4o, data.SystemPrompt)
 
 	openai.AddFunction(actor, "write", "Write a new note", func(args WriteArgs, r store.Store) (Response, error) {
 		embedding, err := embeddingClient.Embed(args.Content)
@@ -140,8 +140,8 @@ type Summary struct {
 	Irrelevant []string `json:"irrelevant" jsonschema:"description:IDs of irrelevant documents"`
 }
 
-func pipelineSummarize(model openai.Model, wikiPrefix string, responseVar store.Var[Response]) lingograph.Pipeline {
-	actor := openai.NewActor(model, data.SystemPromptSummarize)
+func pipelineSummarize(client openai.Client, wikiPrefix string, responseVar store.Var[Response]) lingograph.Pipeline {
+	actor := openai.NewActor(client, openai.GPT4o, data.SystemPromptSummarize)
 
 	openai.AddFunction(actor, "summarize", "Summarize notes", func(summary Summary, r store.Store) (Response, error) {
 		response := Response{
@@ -158,7 +158,7 @@ func pipelineSummarize(model openai.Model, wikiPrefix string, responseVar store.
 }
 
 func NewCtx(wiki WikiRW, wikiPrefix string, apiKey string, embeddingDimensions int) *Ctx {
-	model := openai.NewModel(openai.GPT4o, apiKey)
+	client := openai.NewClient(apiKey)
 
 	doSummarizeVar := store.FreshVar[bool]()
 	responseVar := store.FreshVar[Response]()
@@ -167,8 +167,8 @@ func NewCtx(wiki WikiRW, wikiPrefix string, apiKey string, embeddingDimensions i
 	db := search.NewDB()
 
 	return &Ctx{
-		pipelineSearch:    pipelineSearch(model, db, embeddingClient, wiki, wikiPrefix, doSummarizeVar, responseVar),
-		pipelineSummarize: pipelineSummarize(model, wikiPrefix, responseVar),
+		pipelineSearch:    pipelineSearch(client, db, embeddingClient, wiki, wikiPrefix, doSummarizeVar, responseVar),
+		pipelineSummarize: pipelineSummarize(client, wikiPrefix, responseVar),
 		responseVar:       responseVar,
 		doSummarizeVar:    doSummarizeVar,
 		wikiPrefix:        wikiPrefix,
