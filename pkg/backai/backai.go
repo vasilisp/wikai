@@ -75,7 +75,7 @@ func doSearch(embeddingClient EmbeddingClient, db search.DB, query string) ([]st
 }
 
 func pipelineSearch(client openai.Client, db search.DB, embeddingClient EmbeddingClient, wiki WikiRW, wikiPrefix string, doSummarizeVar store.Var[bool], responseVar store.Var[Response]) lingograph.Pipeline {
-	actor := openai.NewActor(client, openai.GPT4o, data.SystemPrompt)
+	actor := openai.NewActor(client, openai.GPT41Mini, data.SystemPrompt)
 
 	openai.AddFunction(actor, "write", "Write a new note", func(args WriteArgs, r store.Store) (Response, error) {
 		embedding, err := embeddingClient.Embed(args.Content)
@@ -135,13 +135,13 @@ func pipelineSearch(client openai.Client, db search.DB, embeddingClient Embeddin
 }
 
 type Summary struct {
-	Text       string   `json:"text" jsonschema:"description:summary text"`
-	Relevant   []string `json:"relevant" jsonschema:"description:IDs of relevant documents"`
-	Irrelevant []string `json:"irrelevant" jsonschema:"description:IDs of irrelevant documents"`
+	Text       string   `json:"text" jsonschema:"description:Summary text"`
+	Relevant   []string `json:"relevant" jsonschema:"description:List of opaque document IDs that are relevant (do not summarize or rephrase)"`
+	Irrelevant []string `json:"irrelevant" jsonschema:"description:List of opaque document IDs that are irrelevant (do not summarize or rephrase)"`
 }
 
 func pipelineSummarize(client openai.Client, wikiPrefix string, responseVar store.Var[Response]) lingograph.Pipeline {
-	actor := openai.NewActor(client, openai.GPT4o, data.SystemPromptSummarize)
+	actor := openai.NewActor(client, openai.GPT41Mini, data.SystemPromptSummarize)
 
 	openai.AddFunction(actor, "summarize", "Summarize notes", func(summary Summary, r store.Store) (Response, error) {
 		response := Response{
