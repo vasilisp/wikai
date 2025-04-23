@@ -5,7 +5,7 @@ go 1.24.2
 require (
 	github.com/microcosm-cc/bluemonday v1.0.27
 	github.com/openai/openai-go v0.1.0-beta.10
-	github.com/vasilisp/lingograph v0.0.0-20250421144323-90d642ab6974
+	github.com/vasilisp/lingograph v0.0.0-20250423002535-b7be224eae5d
 	github.com/yuin/goldmark v1.7.8
 	gonum.org/v1/gonum v0.16.0
 )

@@ -35,6 +35,8 @@ github.com/vasilisp/lingograph v0.0.0-20250420220915-48122b524d13 h1:6jR0rDboJrd
 github.com/vasilisp/lingograph v0.0.0-20250420220915-48122b524d13/go.mod h1:NDFBQdKyvMEchGrBTzRX6DcB4b+oyvUQsNCKZPFr3kM=
 github.com/vasilisp/lingograph v0.0.0-20250421144323-90d642ab6974 h1:v6Eqq8kI5CuIFkxqf6a3wwLGki13A7dzf8hMwwxJUtU=
 github.com/vasilisp/lingograph v0.0.0-20250421144323-90d642ab6974/go.mod h1:NDFBQdKyvMEchGrBTzRX6DcB4b+oyvUQsNCKZPFr3kM=
+github.com/vasilisp/lingograph v0.0.0-20250423002535-b7be224eae5d h1:oRElNDjIBXedIaNUovoItTOCIcLt/OOdigsadufaPtY=
+github.com/vasilisp/lingograph v0.0.0-20250423002535-b7be224eae5d/go.mod h1:wcTfhsQ6peMXkGIMNlwsNGnw/FkTshiF/veAC4ICwX4=
 github.com/wk8/go-ordered-map/v2 v2.1.8 h1:5h/BUHu93oj4gIdvHHHGsScSTMijfx5PeYkE/fJgbpc=
 github.com/wk8/go-ordered-map/v2 v2.1.8/go.mod h1:5nJHM5DyteebpVlHnWMV0rPz6Zp7+xBAnxjb1X5vnTw=
 github.com/yuin/goldmark v1.7.8 h1:iERMLn0/QJeHFhxSt3p6PeN9mGnvIKSpG9YYorDMnic=

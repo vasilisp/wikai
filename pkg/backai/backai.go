@@ -183,7 +183,11 @@ func (ctx *Ctx) Query(userQuery string) (Response, error) {
 	pipeline := lingograph.Chain(
 		lingograph.UserPrompt(userQuery, false),
 		ctx.pipelineSearch,
-		lingograph.If(ctx.doSummarizeVar,
+		lingograph.If(
+			func(r store.StoreRO) bool {
+				doSummarize, ok := store.GetRO(r, ctx.doSummarizeVar)
+				return ok && doSummarize
+			},
 			ctx.pipelineSummarize,
 			lingograph.Chain(),
 		),
@@ -194,7 +198,9 @@ func (ctx *Ctx) Query(userQuery string) (Response, error) {
 		return Response{}, err
 	}
 
-	if len(chat.History()) == 0 {
+	history := chat.History()
+
+	if history.Len() == 0 {
 		return Response{}, errors.New("no messages")
 	}
 
@@ -209,6 +215,6 @@ func (ctx *Ctx) Query(userQuery string) (Response, error) {
 	}
 
 	return Response{
-		Message: chat.History()[len(chat.History())-1].Content,
+		Message: history.At(history.Len() - 1).Content,
 	}, nil
 }
