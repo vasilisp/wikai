@@ -41,8 +41,8 @@ func (ctx *Ctx) Embed(content string) ([]float64, error) {
 }
 
 type WriteArgs struct {
-	Path    string `json:"path" jsonschema:"description:path for the note to write, suitable for a web URL; only lowercase characters a-z, 0-9, and - are allowed"`
-	Content string `json:"content" jsonschema:"description:Markdown-formattedcontent to write"`
+	Path    string `json:"path" jsonschema:"title=Note Path,description=The note path, suitable for a web URL; must be lowercase letters (a-z), digits (0-9), or hyphens (-) only, with no slashes or subdirectories.,pattern=^[a-z0-9-]+$,examples=[\"daily-notes\", \"meeting-20250424\"]"`
+	Content string `json:"content" jsonschema:"title=Note Content,description=Markdown-formatted content to write"`
 }
 
 type SearchArgs struct {
