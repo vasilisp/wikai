@@ -115,7 +115,7 @@ func doSearch(embeddingClient EmbeddingClient, db search.DB, query string) ([]st
 }
 
 func pipelineSearch(client openai.Client, db search.DB, embeddingClient EmbeddingClient, wiki WikiRW, wikiPrefix string, doSummarizeVar store.Var[bool], responseVar store.Var[api.PostResponse]) lingograph.Pipeline {
-	actor := openai.NewActor(client, openai.GPT41Mini, data.SystemPrompt)
+	actor := openai.NewActor(client, openai.GPT41Mini, data.SystemPrompt, nil)
 
 	openai.AddFunction(actor, "write", "Write a new note", func(args WriteArgs, r store.Store) (api.PostResponse, error) {
 		embedding, err := embeddingClient.Embed(args.Content)
@@ -181,7 +181,7 @@ type Summary struct {
 }
 
 func pipelineSummarize(client openai.Client, wikiPrefix string, responseVar store.Var[api.PostResponse]) lingograph.Pipeline {
-	actor := openai.NewActor(client, openai.GPT41Mini, data.SystemPromptSummarize)
+	actor := openai.NewActor(client, openai.GPT41Mini, data.SystemPromptSummarize, nil)
 
 	openai.AddFunction(actor, "summarize", "Summarize notes", func(summary Summary, r store.Store) (api.PostResponse, error) {
 		response := api.PostResponse{
@@ -223,7 +223,7 @@ func (ctx *Ctx) Query(userQuery string, chatId string) (api.PostResponse, error)
 	if !ok {
 		chatId = uuid.New().String()
 		log.Printf("new chat %s", chatId)
-		chat = lingograph.NewSliceChat()
+		chat = lingograph.NewChat()
 		ctx.recentChats.add(chatId, chat)
 	}
 
