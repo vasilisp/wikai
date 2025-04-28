@@ -14,6 +14,7 @@
     function ChatApp() {
       const [messages, setMessages] = React.useState([]);
       const [input, setInput] = React.useState('');
+      const [chatId, setChatId] = React.useState("");
       const messagesEndRef = React.useRef(null);
 
       const renderMessage = (message) => {
@@ -75,12 +76,21 @@
         try {
           const response = await fetch('/ai', {
             method: 'POST',
-            body: userMessage
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              message: userMessage,
+              chat_id: chatId
+            })
           });
           if (!response.ok) {
             throw new Error(`HTTP status ${response.status}`);
           }
           const data = await response.json();
+          if (data.chat_id) {
+            setChatId(data.chat_id);
+          }
           let messageText = data.message;
           let links = null;
           if (data.references && data.references.length > 0) {
@@ -117,7 +127,7 @@
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Type your message..."
+              placeholder="Search notes..."
               className="chat-input"
             />
             <button type="submit" className="send-button">

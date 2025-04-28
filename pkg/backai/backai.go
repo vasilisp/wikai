@@ -6,11 +6,16 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sync"
 	"time"
+	"unicode"
 
+	"github.com/golang/groupcache/lru"
+	"github.com/google/uuid"
 	"github.com/vasilisp/lingograph"
 	"github.com/vasilisp/lingograph/openai"
 	"github.com/vasilisp/lingograph/store"
+	"github.com/vasilisp/wikai/internal/api"
 	"github.com/vasilisp/wikai/internal/data"
 	"github.com/vasilisp/wikai/internal/util"
 	"github.com/vasilisp/wikai/pkg/search"
@@ -21,14 +26,55 @@ type WikiRW interface {
 	Write(path string, content string, embedding []float64) error
 }
 
+const recentChatsLimit = 10
+
+type recentChats struct {
+	mu    sync.Mutex
+	cache *lru.Cache
+}
+
+func (s *recentChats) add(key string, value lingograph.Chat) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cache.Add(key, value)
+}
+
+func sanitizeKey(key string) string {
+	var out []rune
+	for _, r := range key {
+		if unicode.IsPrint(r) {
+			out = append(out, r)
+		}
+	}
+	return string(out)
+}
+
+func (s *recentChats) get(key string) (value lingograph.Chat, ok bool) {
+	if key == "" {
+		return nil, false
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if val, ok := s.cache.Get(key); ok {
+		log.Printf("continuing chat %s", sanitizeKey(key))
+		return val.(lingograph.Chat), true
+	}
+
+	log.Printf("key not found: %s", sanitizeKey(key))
+	return nil, false
+}
+
 type Ctx struct {
 	pipelineSearch    lingograph.Pipeline
 	pipelineSummarize lingograph.Pipeline
 	doSummarizeVar    store.Var[bool]
-	responseVar       store.Var[Response]
+	responseVar       store.Var[api.PostResponse]
 	wikiPrefix        string
 	embeddingClient   EmbeddingClient
 	db                search.DB
+	recentChats       recentChats
 }
 
 func (ctx *Ctx) DB() search.DB {
@@ -47,12 +93,6 @@ type WriteArgs struct {
 
 type SearchArgs struct {
 	Query string
-}
-
-type Response struct {
-	Message         string   `json:"message,omitempty" jsonschema:"description:human-readable response message without any formatting"`
-	References      []string `json:"references,omitempty" jsonschema:"description:IDs of relevant documents; NOT the whole content of each document"`
-	ReferencePrefix string   `json:"reference_prefix,omitempty" jsonschema:"description:Web path for the reference IDs"`
 }
 
 func doSearch(embeddingClient EmbeddingClient, db search.DB, query string) ([]string, error) {
@@ -74,13 +114,13 @@ func doSearch(embeddingClient EmbeddingClient, db search.DB, query string) ([]st
 	return paths, nil
 }
 
-func pipelineSearch(client openai.Client, db search.DB, embeddingClient EmbeddingClient, wiki WikiRW, wikiPrefix string, doSummarizeVar store.Var[bool], responseVar store.Var[Response]) lingograph.Pipeline {
+func pipelineSearch(client openai.Client, db search.DB, embeddingClient EmbeddingClient, wiki WikiRW, wikiPrefix string, doSummarizeVar store.Var[bool], responseVar store.Var[api.PostResponse]) lingograph.Pipeline {
 	actor := openai.NewActor(client, openai.GPT41Mini, data.SystemPrompt)
 
-	openai.AddFunction(actor, "write", "Write a new note", func(args WriteArgs, r store.Store) (Response, error) {
+	openai.AddFunction(actor, "write", "Write a new note", func(args WriteArgs, r store.Store) (api.PostResponse, error) {
 		embedding, err := embeddingClient.Embed(args.Content)
 		if err != nil {
-			return Response{}, fmt.Errorf("failed to embed content: %v", err)
+			return api.PostResponse{}, fmt.Errorf("failed to embed content: %v", err)
 		}
 
 		err = wiki.Write(args.Path, args.Content, embedding)
@@ -88,10 +128,10 @@ func pipelineSearch(client openai.Client, db search.DB, embeddingClient Embeddin
 		db.Add(args.Path, embedding, time.Now())
 
 		if err != nil {
-			return Response{}, err
+			return api.PostResponse{}, err
 		}
 
-		response := Response{
+		response := api.PostResponse{
 			Message:         fmt.Sprintf("I saved a new note for you: %s", args.Path),
 			References:      []string{args.Path},
 			ReferencePrefix: wikiPrefix,
@@ -140,11 +180,11 @@ type Summary struct {
 	Irrelevant []string `json:"irrelevant" jsonschema:"description:List of opaque document IDs that are irrelevant (do not summarize or rephrase)"`
 }
 
-func pipelineSummarize(client openai.Client, wikiPrefix string, responseVar store.Var[Response]) lingograph.Pipeline {
+func pipelineSummarize(client openai.Client, wikiPrefix string, responseVar store.Var[api.PostResponse]) lingograph.Pipeline {
 	actor := openai.NewActor(client, openai.GPT41Mini, data.SystemPromptSummarize)
 
-	openai.AddFunction(actor, "summarize", "Summarize notes", func(summary Summary, r store.Store) (Response, error) {
-		response := Response{
+	openai.AddFunction(actor, "summarize", "Summarize notes", func(summary Summary, r store.Store) (api.PostResponse, error) {
+		response := api.PostResponse{
 			Message:         summary.Text,
 			References:      summary.Relevant,
 			ReferencePrefix: wikiPrefix,
@@ -161,7 +201,7 @@ func NewCtx(wiki WikiRW, wikiPrefix string, apiKey string, embeddingDimensions i
 	client := openai.NewClient(apiKey)
 
 	doSummarizeVar := store.FreshVar[bool]()
-	responseVar := store.FreshVar[Response]()
+	responseVar := store.FreshVar[api.PostResponse]()
 
 	embeddingClient := NewEmbeddingClient(apiKey, embeddingDimensions)
 	db := search.NewDB()
@@ -174,11 +214,18 @@ func NewCtx(wiki WikiRW, wikiPrefix string, apiKey string, embeddingDimensions i
 		wikiPrefix:        wikiPrefix,
 		embeddingClient:   embeddingClient,
 		db:                db,
+		recentChats:       recentChats{cache: lru.New(recentChatsLimit)},
 	}
 }
 
-func (ctx *Ctx) Query(userQuery string) (Response, error) {
-	chat := lingograph.NewSliceChat()
+func (ctx *Ctx) Query(userQuery string, chatId string) (api.PostResponse, error) {
+	chat, ok := ctx.recentChats.get(chatId)
+	if !ok {
+		chatId = uuid.New().String()
+		log.Printf("new chat %s", chatId)
+		chat = lingograph.NewSliceChat()
+		ctx.recentChats.add(chatId, chat)
+	}
 
 	pipeline := lingograph.Chain(
 		lingograph.UserPrompt(userQuery, false),
@@ -195,13 +242,13 @@ func (ctx *Ctx) Query(userQuery string) (Response, error) {
 
 	err := pipeline.Execute(chat)
 	if err != nil {
-		return Response{}, err
+		return api.PostResponse{}, err
 	}
 
 	history := chat.History()
 
 	if history.Len() == 0 {
-		return Response{}, errors.New("no messages")
+		return api.PostResponse{}, errors.New("no messages")
 	}
 
 	responseVal, ok := store.Get(chat.Store(), ctx.responseVar)
@@ -211,10 +258,11 @@ func (ctx *Ctx) Query(userQuery string) (Response, error) {
 
 	doSummarize, ok := store.Get(chat.Store(), ctx.doSummarizeVar)
 	if ok && doSummarize {
-		return Response{}, errors.New("internal error: no response")
+		return api.PostResponse{}, errors.New("internal error: no response")
 	}
 
-	return Response{
+	return api.PostResponse{
 		Message: history.At(history.Len() - 1).Content,
+		ChatID:  chatId,
 	}, nil
 }

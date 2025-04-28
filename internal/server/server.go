@@ -194,13 +194,19 @@ func aiHandler(ctx *ctx, w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	userQuery := string(body)
+	var postRequest api.PostRequest
+	if err := json.Unmarshal(body, &postRequest); err != nil {
+		http.Error(w, "Failed to parse request body", http.StatusBadRequest)
+		return
+	}
+
+	userQuery := postRequest.Message
 	if userQuery == "" {
 		http.Error(w, "Empty query", http.StatusBadRequest)
 		return
 	}
 
-	aiResponse, err := ctx.bai.Query(userQuery)
+	aiResponse, err := ctx.bai.Query(userQuery, postRequest.ChatID)
 	if err != nil {
 		log.Printf("LLM error: %v", err)
 		http.Error(w, "LLM error", http.StatusInternalServerError)
@@ -209,12 +215,7 @@ func aiHandler(ctx *ctx, w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 
-	response := backai.Response{
-		Message:         aiResponse.Message,
-		References:      aiResponse.References,
-		ReferencePrefix: aiResponse.ReferencePrefix,
-	}
-	json.NewEncoder(w).Encode(response)
+	json.NewEncoder(w).Encode(aiResponse)
 }
 
 func validateAndIndex(ctx *ctx, path string) error {

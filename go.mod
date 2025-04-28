@@ -3,6 +3,8 @@ module github.com/vasilisp/wikai
 go 1.24.2
 
 require (
+	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8
+	github.com/google/uuid v1.6.0
 	github.com/microcosm-cc/bluemonday v1.0.27
 	github.com/openai/openai-go v0.1.0-beta.10
 	github.com/vasilisp/lingograph v0.0.0-20250423002535-b7be224eae5d
