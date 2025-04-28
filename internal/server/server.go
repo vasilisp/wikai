@@ -14,10 +14,10 @@ import (
 	"time"
 
 	"github.com/microcosm-cc/bluemonday"
-	"github.com/vasilisp/wikai/internal/api"
 	"github.com/vasilisp/wikai/internal/data"
 	"github.com/vasilisp/wikai/internal/git"
 	"github.com/vasilisp/wikai/internal/util"
+	"github.com/vasilisp/wikai/pkg/api"
 	"github.com/vasilisp/wikai/pkg/backai"
 	"github.com/vasilisp/wikai/pkg/embedding"
 	"github.com/yuin/goldmark"

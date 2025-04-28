@@ -15,9 +15,9 @@ import (
 	"github.com/vasilisp/lingograph"
 	"github.com/vasilisp/lingograph/openai"
 	"github.com/vasilisp/lingograph/store"
-	"github.com/vasilisp/wikai/internal/api"
 	"github.com/vasilisp/wikai/internal/data"
 	"github.com/vasilisp/wikai/internal/util"
+	"github.com/vasilisp/wikai/pkg/api"
 	"github.com/vasilisp/wikai/pkg/search"
 )
 

@@ -9,8 +9,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/vasilisp/wikai/internal/api"
 	"github.com/vasilisp/wikai/internal/util"
+	"github.com/vasilisp/wikai/pkg/api"
 )
 
 func askGPT(args []string, port int) {
