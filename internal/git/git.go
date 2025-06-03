@@ -21,7 +21,10 @@ type Repo interface {
 	// GetNoteContents gets the contents of all notes in the repository, calling
 	// the handle for each
 	GetNoteContents(handle func(string)) error
+	seal()
 }
+
+func (r *repo) seal() {}
 
 type repo struct {
 	path string

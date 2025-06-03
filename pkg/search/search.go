@@ -42,7 +42,10 @@ type DB interface {
 	NumRows() int
 	// DocStamp returns the timestamp of the document with the given id
 	DocStamp(id string) (time.Time, bool)
+	seal()
 }
+
+func (db *db) seal() {}
 
 type db struct {
 	rows map[string]row
