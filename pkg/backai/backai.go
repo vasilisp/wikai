@@ -265,12 +265,12 @@ func (ctx *ctx) Query(userQuery string, chatId string) (api.PostResponse, error)
 		return api.PostResponse{}, errors.New("no messages")
 	}
 
-	responseVal, ok := store.Get(chat.Store(), ctx.responseVar)
+	responseVal, ok := lingograph.Get(chat, ctx.responseVar)
 	if ok {
 		return responseVal, nil
 	}
 
-	doSummarize, ok := store.Get(chat.Store(), ctx.doSummarizeVar)
+	doSummarize, ok := lingograph.Get(chat, ctx.doSummarizeVar)
 	if ok && doSummarize {
 		return api.PostResponse{}, errors.New("internal error: no response")
 	}
