@@ -9,18 +9,27 @@ import (
 	"github.com/vasilisp/wikai/internal/util"
 )
 
-type EmbeddingClient struct {
+type EmbeddingClient interface {
+	// Embed converts a string into a vector of float64 values
+	Embed(str string) ([]float64, error)
+	seal()
+}
+
+type embeddingClient struct {
 	client              *openai.Client
 	embeddingDimensions int
 }
 
+func (e *embeddingClient) seal() {}
+
+// NewEmbeddingClient creates a new instance of the embedding client
 func NewEmbeddingClient(token string, embeddingDimensions int) EmbeddingClient {
 	util.Assert(token != "", "NewClient empty token")
 	util.Assert(embeddingDimensions > 0, "NewClient non-positive embeddingDimensions")
 
 	client := openai.NewClient(option.WithAPIKey(token))
 
-	return EmbeddingClient{
+	return &embeddingClient{
 		client:              &client,
 		embeddingDimensions: embeddingDimensions,
 	}
@@ -41,10 +50,8 @@ func splitTextIntoChunks(text string, chunkSize int) *[]string {
 	return &chunks
 }
 
-func (c EmbeddingClient) Embed(str string) ([]float64, error) {
+func (c *embeddingClient) Embed(str string) ([]float64, error) {
 	util.Assert(str != "", "embed empty string")
-
-	// Create embedding request
 
 	strings := *splitTextIntoChunks(str, 512)
 
