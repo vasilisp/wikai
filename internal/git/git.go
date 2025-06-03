@@ -10,17 +10,30 @@ import (
 	"strings"
 )
 
-type Repo struct {
+// Repo represents a git repository
+type Repo interface {
+	// Add adds a file to the repository
+	Add(file string) error
+	// AddNote adds a note to the latest commit
+	AddNote(note string) error
+	// Commit commits the changes to the repository
+	Commit(message string, allowEmpty bool) error
+	// GetNoteContents gets the contents of all notes in the repository, calling
+	// the handle for each
+	GetNoteContents(handle func(string)) error
+}
+
+type repo struct {
 	path string
 }
 
-func (r Repo) Add(file string) error {
+func (r *repo) Add(file string) error {
 	cmd := exec.Command("git", "add", file)
 	cmd.Dir = r.path
 	return cmd.Run()
 }
 
-func (r Repo) Commit(message string, allowEmpty bool) error {
+func (r *repo) Commit(message string, allowEmpty bool) error {
 	var args []string
 	if allowEmpty {
 		args = []string{"commit", "-m", message, "--allow-empty"}
@@ -32,7 +45,7 @@ func (r Repo) Commit(message string, allowEmpty bool) error {
 	return cmd.Run()
 }
 
-func (r Repo) addGitIgnore(gitIgnore string) error {
+func (r *repo) addGitIgnore(gitIgnore string) error {
 	gitIgnorePath := filepath.Join(r.path, ".gitignore")
 	if _, err := os.Stat(gitIgnorePath); !os.IsNotExist(err) {
 		log.Printf("gitignore already exists in %s", r.path)
@@ -56,46 +69,56 @@ func (r Repo) addGitIgnore(gitIgnore string) error {
 	return nil
 }
 
-func initRepo(path string, gitIgnore string) (Repo, error) {
+func initRepo(path string, gitIgnore string) (*repo, error) {
 	cmd := exec.Command("git", "init")
 	cmd.Dir = path
 
 	err := cmd.Run()
 	if err != nil {
-		return Repo{}, fmt.Errorf("failed to init repo %s: %v", path, err)
+		return nil, fmt.Errorf("failed to init repo %s: %v", path, err)
 	}
 
-	repo := Repo{path: path}
+	repo := repo{path: path}
 
 	if gitIgnore != "" {
 		err = repo.addGitIgnore(gitIgnore)
 		if err != nil {
-			return Repo{}, fmt.Errorf("failed to add gitignore to %s: %v", path, err)
+			return nil, fmt.Errorf("failed to add gitignore to %s: %v", path, err)
 		}
 	}
 
-	return repo, nil
+	return &repo, nil
 }
 
 func NewRepo(path string, gitIgnore string) (Repo, error) {
 	fi, err := os.Stat(path)
 	if os.IsNotExist(err) {
-		return Repo{}, fmt.Errorf("repo %s does not exist", path)
+		return nil, fmt.Errorf("repo %s does not exist", path)
 	}
 
 	if !fi.IsDir() {
-		return Repo{}, fmt.Errorf("path %s is not a directory", path)
+		return nil, fmt.Errorf("path %s is not a directory", path)
 	}
 
 	if _, err := os.Stat(filepath.Join(path, ".git")); os.IsNotExist(err) {
-		return initRepo(path, gitIgnore)
+		repo, err := initRepo(path, gitIgnore)
+		if err != nil {
+			return nil, err
+		}
+
+		return repo, nil
 	}
 
 	log.Printf("will manage existing repo %s", path)
-	return Repo{path: path}, nil
+	repo, err := initRepo(path, gitIgnore)
+	if err != nil {
+		return nil, err
+	}
+
+	return repo, nil
 }
 
-func (r Repo) AddNote(note string) error {
+func (r *repo) AddNote(note string) error {
 	// Add the vector as a note to the latest commit
 	noteCmd := exec.Command("git", "notes", "append", "-m", note, "HEAD")
 	noteCmd.Dir = r.path
@@ -107,7 +130,7 @@ func (r Repo) AddNote(note string) error {
 	return nil
 }
 
-func (r Repo) getNotes() ([]string, error) {
+func (r *repo) getNotes() ([]string, error) {
 	noteCmd := exec.Command("git", "notes", "list")
 	noteCmd.Dir = r.path
 
@@ -142,7 +165,7 @@ func (r Repo) getNotes() ([]string, error) {
 	return result, nil
 }
 
-func (r Repo) getNoteContents(noteRefs []string, handle func(string)) error {
+func (r *repo) getNoteContents(noteRefs []string, handle func(string)) error {
 	if len(noteRefs) == 0 {
 		return nil
 	}
@@ -195,7 +218,7 @@ func (r Repo) getNoteContents(noteRefs []string, handle func(string)) error {
 	return nil
 }
 
-func (r Repo) GetNoteContents(handle func(string)) error {
+func (r *repo) GetNoteContents(handle func(string)) error {
 	noteRefs, err := r.getNotes()
 	if err != nil {
 		return fmt.Errorf("failed to get notes: %v", err)
