@@ -92,7 +92,7 @@ type bestResults struct {
 	maxSize int
 }
 
-func NewBestResults(maxSize int) bestResults {
+func newBestResults(maxSize int) bestResults {
 	results := resultHeap{}
 	heap.Init(&results)
 
@@ -102,14 +102,14 @@ func NewBestResults(maxSize int) bestResults {
 	}
 }
 
-func (br bestResults) Add(result Result) {
+func (br bestResults) add(result Result) {
 	heap.Push(br.results, result)
 	if br.results.Len() > br.maxSize {
 		heap.Pop(br.results)
 	}
 }
 
-func (br bestResults) Get() []Result {
+func (br bestResults) get() []Result {
 	results := *br.results
 	sort.Slice(results, func(i, j int) bool {
 		return results[i].Distance < results[j].Distance
@@ -120,7 +120,7 @@ func (br bestResults) Get() []Result {
 func (db *db) Search(query []float64, maxResults int) ([]Result, error) {
 	util.Assert(db.rows != nil, "Search nil embeddings")
 
-	bestResults := NewBestResults(maxResults)
+	bestResults := newBestResults(maxResults)
 
 	// brute-force, calculate cosine similarity with all embeddings
 	for id, row := range db.rows {
@@ -130,13 +130,13 @@ func (db *db) Search(query []float64, maxResults int) ([]Result, error) {
 
 		distance := cosineDistance(query, row.vector)
 
-		bestResults.Add(Result{
+		bestResults.add(Result{
 			Path:     id,
 			Distance: distance,
 		})
 	}
 
-	return bestResults.Get(), nil
+	return bestResults.get(), nil
 }
 
 func (db *db) DocStamp(id string) (time.Time, bool) {
