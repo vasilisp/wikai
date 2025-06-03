@@ -33,17 +33,28 @@ type row struct {
 	stamp  time.Time
 }
 
-type DB struct {
+type DB interface {
+	// Add adds an embedding to the database
+	Add(id string, emb []float64, stamp time.Time)
+	// Search searches the database for the most similar embeddings to the query
+	Search(query []float64, maxResults int) ([]Result, error)
+	// NumRows returns the number of rows in the database
+	NumRows() int
+	// DocStamp returns the timestamp of the document with the given id
+	DocStamp(id string) (time.Time, bool)
+}
+
+type db struct {
 	rows map[string]row
 }
 
 func NewDB() DB {
 	rows := make(map[string]row)
 
-	return DB{rows: rows}
+	return &db{rows: rows}
 }
 
-func (db DB) Add(id string, emb []float64, stamp time.Time) {
+func (db *db) Add(id string, emb []float64, stamp time.Time) {
 	util.Assert(db.rows != nil, "Add nil embeddings")
 
 	if _, ok := db.rows[id]; ok {
@@ -103,7 +114,7 @@ func (br bestResults) Get() []Result {
 	return results
 }
 
-func (db DB) Search(query []float64, maxResults int) ([]Result, error) {
+func (db *db) Search(query []float64, maxResults int) ([]Result, error) {
 	util.Assert(db.rows != nil, "Search nil embeddings")
 
 	bestResults := NewBestResults(maxResults)
@@ -125,7 +136,7 @@ func (db DB) Search(query []float64, maxResults int) ([]Result, error) {
 	return bestResults.Get(), nil
 }
 
-func (db DB) DocStamp(id string) (time.Time, bool) {
+func (db *db) DocStamp(id string) (time.Time, bool) {
 	util.Assert(db.rows != nil, "DocStamp nil embeddings")
 
 	row, ok := db.rows[id]
@@ -136,7 +147,7 @@ func (db DB) DocStamp(id string) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-func (db DB) NumRows() int {
+func (db *db) NumRows() int {
 	util.Assert(db.rows != nil, "Stats nil embeddings")
 
 	return len(db.rows)
