@@ -26,7 +26,7 @@ import (
 type ctx struct {
 	config *config
 	git    git.Repo
-	bai    *backai.Ctx
+	bai    backai.Ctx
 }
 
 func loadEmbeddings(ctx *ctx) error {

@@ -66,7 +66,19 @@ func (s *recentChats) get(key string) (value lingograph.Chat, ok bool) {
 	return nil, false
 }
 
-type Ctx struct {
+// Ctx represents the context of the backai package
+type Ctx interface {
+	// Embed converts a string into a vector of float64 values
+	Embed(content string) ([]float64, error)
+	// Query sends a query to the backend LLM, possibly using the chat history
+	// represented by the chatId
+	Query(userQuery string, chatId string) (api.PostResponse, error)
+	// DB provides access to the underlying database handle
+	DB() search.DB
+	seal()
+}
+
+type ctx struct {
 	pipelineSearch    lingograph.Pipeline
 	pipelineSummarize lingograph.Pipeline
 	doSummarizeVar    store.Var[bool]
@@ -77,11 +89,13 @@ type Ctx struct {
 	recentChats       recentChats
 }
 
-func (ctx *Ctx) DB() search.DB {
+func (ctx *ctx) seal() {}
+
+func (ctx *ctx) DB() search.DB {
 	return ctx.db
 }
 
-func (ctx *Ctx) Embed(content string) ([]float64, error) {
+func (ctx *ctx) Embed(content string) ([]float64, error) {
 	util.Assert(ctx != nil, "Ctx is nil")
 	return ctx.embeddingClient.Embed(content)
 }
@@ -197,7 +211,7 @@ func pipelineSummarize(client openai.Client, wikiPrefix string, responseVar stor
 	return actor.Pipeline(nil, false, 3)
 }
 
-func NewCtx(wiki WikiRW, wikiPrefix string, apiKey string, embeddingDimensions int) *Ctx {
+func NewCtx(wiki WikiRW, wikiPrefix string, apiKey string, embeddingDimensions int) Ctx {
 	client := openai.NewClient(apiKey)
 
 	doSummarizeVar := store.FreshVar[bool]()
@@ -206,7 +220,7 @@ func NewCtx(wiki WikiRW, wikiPrefix string, apiKey string, embeddingDimensions i
 	embeddingClient := NewEmbeddingClient(apiKey, embeddingDimensions)
 	db := search.NewDB()
 
-	return &Ctx{
+	return &ctx{
 		pipelineSearch:    pipelineSearch(client, db, embeddingClient, wiki, wikiPrefix, doSummarizeVar, responseVar),
 		pipelineSummarize: pipelineSummarize(client, wikiPrefix, responseVar),
 		responseVar:       responseVar,
@@ -218,7 +232,7 @@ func NewCtx(wiki WikiRW, wikiPrefix string, apiKey string, embeddingDimensions i
 	}
 }
 
-func (ctx *Ctx) Query(userQuery string, chatId string) (api.PostResponse, error) {
+func (ctx *ctx) Query(userQuery string, chatId string) (api.PostResponse, error) {
 	chat, ok := ctx.recentChats.get(chatId)
 	if !ok {
 		chatId = uuid.New().String()
